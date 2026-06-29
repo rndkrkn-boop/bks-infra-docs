@@ -34,10 +34,16 @@ flowchart LR
     DEV(["👨‍💻 Developer"]):::dev
     TG(["✈️ Telegram"]):::external
 
+    subgraph GH["GitHub · rndkrkn-boop"]
+        GHBKS["bksamotsvety\nsource-of-truth"]:::dev
+    end
+
     subgraph GITLAB["GitLab CE · :8929"]
-        GL["CI Pipeline"]:::ci
+        GL["CI Pipeline\nrouter · memgraphrag\nsandbox-templates"]:::ci
         REG[("Registry :5050")]:::registry
+        GLBKS["bks/bksamotsvety\npull mirror · CI/CD Vars"]:::ci
         GL -->|kaniko| REG
+        GHBKS -.->|"pull mirror\nPAT"| GLBKS
     end
 
     subgraph SAND["OpenShell Sandbox  bks-production"]
@@ -60,7 +66,8 @@ flowchart LR
         AC["Anthropic\nlarge fallback"]:::cloud
     end
 
-    DEV -->|git push| GL
+    DEV -->|"git push\nbksamotsvety"| GHBKS
+    DEV -->|"git push\nrouter · mgr · templates"| GL
     REG -.->|pull on restart| K3S
 
     TG --> AG
@@ -68,6 +75,7 @@ flowchart LR
     RT -->|proxy| NV & AC
     AG -->|episodes · retrieve| MGR
 
+    style GH     fill:none,stroke:#475569,stroke-width:2px
     style GITLAB  fill:none,stroke:#c2410c,stroke-width:2px
     style SAND    fill:none,stroke:#15803d,stroke-width:2px
     style K3S     fill:none,stroke:#1d4ed8,stroke-width:2px
@@ -91,7 +99,8 @@ flowchart TD
     classDef runner fill:#374151,stroke:#9ca3af,color:#fff,stroke-width:1px
     classDef reg    fill:#7f1d1d,stroke:#dc2626,color:#fff,stroke-width:2px
 
-    PUSH(["git push\norigin main"]):::dev
+    PUSH(["git push\nGitLab · router/mgr/templates"]):::dev
+    PUSHGH(["git push\nGitHub · bksamotsvety"]):::dev
 
     subgraph HOOK["Pre-push Hook  ·  только router"]
         H1{"файлы роутера\nизменились?"}:::stage
@@ -113,7 +122,17 @@ flowchart TD
     HO & HW --> GL
     HF -->|"git push\n--no-verify"| GL
 
+    subgraph GH["GitHub"]
+        GHB["rndkrkn-boop/bksamotsvety"]:::runner
+    end
+    PUSHGH --> GHB
+
     subgraph GL["GitLab CE"]
+        subgraph PB["bks/bksamotsvety"]
+            BM["pull mirror\nCI/CD Variables: 35"]:::runner
+        end
+        GHB -.->|"PAT pull mirror"| BM
+
         subgraph PR["bks/router"]
             R1["lint"]:::ci
             R2["eval-config"]:::ci
@@ -130,7 +149,7 @@ flowchart TD
         subgraph PS["bks/sandbox-templates"]
             S1["validate-presets"]:::ok
         end
-    end
+    end  
 
     subgraph RUN["Runners"]
         RC["bks-docker-runner\ndocker · CPU"]:::runner
@@ -142,7 +161,9 @@ flowchart TD
     R4 & M3 --> REG
 
     style HOOK fill:none,stroke:#7f1d1d,stroke-width:2px
+    style GH   fill:none,stroke:#475569,stroke-width:2px
     style GL   fill:none,stroke:#c2410c,stroke-width:2px
+    style PB   fill:none,stroke:#6b7280,stroke-width:1px,stroke-dasharray:4
     style PR   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PM   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PS   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4

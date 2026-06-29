@@ -12,9 +12,10 @@
 
 ---
 
-## 0. CI/CD и инфраструктура (GitLab CE)
+## 0. CI/CD и инфраструктура (GitLab CE + GitHub)
 
 Самохостинг на том же физическом хосте (192.168.2.180).
+GitHub (`rndkrkn-boop`) — source-of-truth для `bksamotsvety/`; остальные репо живут в GitLab.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -25,6 +26,9 @@
 │    bks/router          → CI: lint → eval-config → unit-test(25) → build     │
 │    bks/sandbox-templates → CI: validate-presets                               │
 │    bks/memgraphrag     → CI: lint → unit-test(12) → build                   │
+│    bks/bksamotsvety    → pull mirror ← GitHub rndkrkn-boop/bksamotsvety     │
+│                           (PAT); нет CI-пайплайна; 35 CI/CD Variables       │
+│                           (4 masked: токены Telegram, LiteLLM key, MGR key) │
 │                                                                               │
 │  ┌──────────────────────────┐  ┌──────────────────────────────────────────┐  │
 │  │ gitlab-runner (CPU)      │  │ gitlab-runner-gpu                        │  │
@@ -77,7 +81,8 @@ git push origin main
 ## 1. Контур деплоя (хост → sandbox)
 
 ```
-deploy/.env  ──source──▶  setup.sh
+GitLab CI/CD Variables  ──export──▶  deploy/.env  ──source──▶  setup.sh
+(35 vars, canonical store)             (gitignored, local copy)
                               │
                               ├─ 1. nemohermes onboard --agent hermes  ──▶  создаёт sandbox "bks-production" (NemoClaw/OpenShell)
                               │
@@ -103,8 +108,9 @@ deploy/.env  ──source──▶  setup.sh
 ```
 
 Песочница = K3s-под внутри OpenShell, управляется только NemoClaw (`nemohermes sandbox …`).
-Креды провайдеров (NVIDIA/Anthropic/Telegram/MemGraphRAG) живут **на хосте**, агент обращается к
-ним через `inference.local` / именованные provider-эндпоинты — сам процесс агента ключи не видит.
+Канонический источник секретов — **GitLab CI/CD Variables** (`bks/bksamotsvety`, 35 переменных).
+Локально: `deploy/.env` (gitignored, заполняется вручную или экспортом из GitLab).
+Сам процесс агента ключи не видит — они инжектируются через `openshell provider` / `inference.local`.
 
 ---
 
@@ -316,7 +322,9 @@ push → lint (ruff check + format) → eval-config (render_litellm_config.py)
    профили используют встроенную Hermes `memory` toolset (файловая, в самом sandbox).
 4. **Агент → веб**: `research`/`market-monitor` — `web_search`/`web_extract`
    через пресет `nous-web`.
-5. **CI/CD**: push в GitLab → lint + unit-test + kaniko build → образ в registry
-   → `kubectl rollout restart` обновляет K3s pod.
+5. **CI/CD**: push в GitLab (router/memgraphrag/sandbox-templates) → lint + unit-test
+   + kaniko build → образ в registry → `kubectl rollout restart` обновляет K3s pod.
+   `bksamotsvety`: push в GitHub → pull mirror → GitLab (только зеркало, CI не запускается).
 6. **Управление**: разворачивание sandbox'ов и сетевые политики — через NemoClaw
-   CLI (`nemohermes ...`); K3s-сервисы — через `kubectl apply -f deploy/`.
+   CLI (`nemohermes ...`); K3s-сервисы — через `kubectl apply -f deploy/`;
+   секреты — в GitLab CI/CD Variables (`bks/bksamotsvety`).

@@ -5,7 +5,7 @@
 
 ---
 
-## Состояние на 2026-06-28
+## Состояние на 2026-06-29
 
 ### Инфраструктура (хост `192.168.2.180`)
 
@@ -21,13 +21,14 @@
 | Whisper STT | `whisper-openai` | 10301 | ✅ running |
 | K3s | — | — | ❌ не установлен |
 
-### GitLab CI
+### GitLab репозитории
 
-| Репо | Последний pipeline | lint | unit-test | build |
-|---|---|---|---|---|
-| bks/router | #17 | ✅ | ✅ 25 тестов | ✅ |
-| bks/sandbox-templates | #7 | — | ✅ | — |
-| bks/memgraphrag | #18 | ✅ | ✅ 12 тестов | ✅ |
+| Репо | Источник | CI-пайплайн | Статус |
+|---|---|---|---|
+| bks/router | GitLab (primary) | lint → eval-config → unit-test(25) → build | ✅ зелёный |
+| bks/sandbox-templates | GitLab (primary) | validate-presets | ✅ зелёный |
+| bks/memgraphrag | GitLab (primary) | lint → unit-test(12) → build | ✅ зелёный |
+| bks/bksamotsvety | GitHub `rndkrkn-boop/bksamotsvety` (pull mirror, PAT) | нет CI; 35 CI/CD Variables | ✅ mirror настроен |
 
 ---
 
@@ -42,6 +43,8 @@
 - **Версии запинены**: docker-compose использует `19.1.1-ce.0` и `v19.1.1`
 - **GPU runner** (`gitlab-runner-gpu`): контейнер поднят, ждёт регистрации
 - **K3s манифесты написаны**: router/deploy/ и MemGraphRAG/deploy/ в репо
+- **bks/bksamotsvety** добавлен в GitLab как pull-mirror от GitHub `rndkrkn-boop/bksamotsvety` (PAT);
+  35 CI/CD Variables (4 masked) — канонический источник секретов деплоя
 
 ---
 
@@ -316,9 +319,18 @@ CI (kaniko) собирает образ автоматически — `imagePul
   install.sh                  — установка K3s (запустить с sudo)
   registries.yaml             — insecure mirror для 192.168.2.180:5050
 
+/home/admin/projects/nemohermes_bks/bksamotsvety/
+  deploy/.env                 — локальная копия секретов (gitignored); canonical → GitLab CI/CD Vars
+  deploy/setup.sh             — первичный деплой sandbox (source deploy/.env перед запуском)
+  deploy/sync-profiles.sh     — синхронизация профилей в sandbox
+  deploy/start-gateways.sh    — запуск per-profile Telegram-шлюзов
+  profiles/*/config.yaml      — конфиги Hermes-профилей
+  git remote origin           → GitHub rndkrkn-boop/bksamotsvety (source-of-truth)
+  GitLab mirror               → http://192.168.2.180:8929/bks/bksamotsvety (pull, PAT)
+
 /home/admin/projects/nemohermes_bks/router/
   docker-compose.yml          — текущий прод (docker)
-  .env                        — NVIDIA_API_KEY_N + прочие секреты
+  .env                        — NVIDIA_API_KEY + ANTHROPIC_API_KEY + LITELLM_MASTER_KEY
   .githooks/pre-push          — eval gate (git config core.hooksPath .githooks)
   eval/gate.py                — качественный регрессионный гейт
   deploy/
