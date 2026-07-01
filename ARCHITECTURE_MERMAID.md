@@ -52,9 +52,9 @@ flowchart LR
 
     subgraph K3S["K3s Cluster · 192.168.2.180"]
         subgraph NSR["bks-router"]
-            RT["router :30400"]:::router
-            VLLM["vllm-classifier\nQwen3.5-0.8B · GPU"]:::vllm
-            RT <-->|classify| VLLM
+            RT["router :30400\nSECURITY_MODEL=security-lora-v1"]:::router
+            VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
+            RT <-->|"classify + security_check"| VLLM
         end
         subgraph NSM["memgraphrag"]
             MGR["MemGraphRAG :8000"]:::memory
@@ -212,10 +212,10 @@ flowchart LR
 
     subgraph ROUTER["Router  ·  NodePort :30400"]
         CLS["classifier.py\n:4000"]:::router
-        VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\n:8000"]:::vllm
+        VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\n:8000\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
         LL["LiteLLM proxy\n:4001"]:::router
-        CLS -->|"> 240K → mid\nauto → classify"| VLLM
-        VLLM -->|"tier"| CLS
+        CLS -->|"fast-path / LLM-classify\n+ security check"]| VLLM
+        VLLM -->|"tier + risk"| CLS
         CLS -->|proxy| LL
     end
 
@@ -261,19 +261,19 @@ flowchart TD
     classDef disk   fill:#374151,stroke:#6b7280,color:#fff,stroke-width:1px
 
     REG[("Registry\n192.168.2.180:5050")]:::reg
-    DISK[("hostPath\n/root/models\nQwen3.5-0.8B")]:::disk
+    DISK[("hostPath\n/home/admin/models\nQwen3.5-0.8B\n+ adapters/")]:::disk
 
-    subgraph K3S["K3s · 192.168.2.180"]
-        NVP["nvidia-device-plugin\nDaemonSet · kube-system\nnvidia.com/gpu = 1"]:::plugin
+    subgraph K3S["K3s · 192.168.2.180  ✅ Running"]
+        NVP["nvidia-device-plugin\nDaemonSet · kube-system\n⚠ GB10: nvmlGetMemoryInfo\nNot Supported — bypassed"]:::plugin
 
         subgraph NSR["namespace: bks-router"]
             CM["ConfigMap\nlitellm_config.base.yaml"]:::cm
             SECR["Secret\nrouter-apikeys\nNVIDIA_API_KEY_N\nANTHROPIC_API_KEY"]:::secret
 
-            VD["Deployment\nvllm-classifier\nvllm-openai:v0.9.0\nnvidia.com/gpu: 1"]:::vllm
+            VD["Deployment\nvllm-classifier ✅\nvllm-openai:nightly\nprivileged + /dev/nvidia*\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
             SV["Service\nClusterIP :8000"]:::svc
 
-            RD["Deployment\nrouter\nbks/router:latest\nclassifier.py + litellm\nsupervisord"]:::deploy
+            RD["Deployment\nrouter ✅\nbks/router:latest\nclassifier.py + litellm\nSECURITY_MODEL=security-lora-v1\nsupervisord"]:::deploy
             SR["Service\nNodePort 30400 → 4000"]:::svc
 
             CM & SECR --> RD
@@ -301,10 +301,10 @@ flowchart TD
             MD --> SMS
         end
 
-        NVP -.->|advertises GPU| VD
+        NVP -.->|"bypassed (GB10)"| VD
     end
 
-    REG -->|imagePullPolicy: Always| VD & RD & MD
+    REG -->|imagePullPolicy: Always| RD & MD
     DISK -->|hostPath mount| VD
 
     AG(["Agents\nOpenShell sandbox"]):::agent
@@ -413,11 +413,17 @@ flowchart LR
         L --> EC --> UT --> B
     end
 
-    subgraph TRAIN["LoRA Training · Phase 5 · opt-in"]
+    subgraph TRAIN["LoRA Training · Phase 5 · S2L ✅"]
         GN["gen_dataset.py\njudge-разметка\nclaude-cli"]:::train
         TL["train_classifier.py\nLoRA SFT · GPU\nQwen3.5-0.8B"]:::train
         EC2["eval_classifier.py\naccuracy vs baseline"]:::train
         GN --> TL --> EC2
+        TA["train_adapter.py\nS2L SFT · GPU\nflash-linear-attention"]:::train
+        PS["prepare_security_data.py\njailbreak-detection\n2480 train / 827 val"]:::train
+        PP["prepare_pii_data.py\npii-detection NER→type\n30k train / 3k val"]:::train
+        PS & PP --> TA
+        TA --> SEC["security-lora-v1 ✅\nloss=0.024 acc=98.9%"]:::train
+        TA --> PII["pii-cleaner-lora-v1 ✅\nloss=0.034 acc=99.1%"]:::train
     end
 
     SRC --> UNIT & GATE & TRAIN

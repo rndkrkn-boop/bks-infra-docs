@@ -5,7 +5,7 @@
 
 ---
 
-## Состояние на 2026-06-29
+## Состояние на 2026-07-01
 
 ### Инфраструктура (хост `192.168.2.180`)
 
@@ -19,7 +19,9 @@
 | vLLM Qwen3.6-35B | `vllm-Qwen3.6-35B-A3B-NVFP4` | 8088 | ✅ running |
 | MemGraphRAG (test) | `memgraphrag-test-qdrant` | 16333 | ✅ running |
 | Whisper STT | `whisper-openai` | 10301 | ✅ running |
-| K3s | — | — | ❌ не установлен |
+| K3s v1.32.5 | — | — | ✅ установлен, node Ready |
+| vllm-classifier (K3s) | pod `bks-router` | 8000 (ClusterIP) | ✅ Running, LoRA loaded |
+| router (K3s) | pod `bks-router` | 30400 (NodePort) | ✅ Running, SECURITY_MODEL active |
 
 ### GitLab репозитории
 
@@ -37,14 +39,18 @@
 - **GitLab CE** + Container Registry + Runner (CPU) — настроен, CI зелёный
 - **CI пайплайны** для трёх репо: lint → unit-test → kaniko build → push в registry
 - **Unit tests**: router (25), MemGraphRAG (12) — без GPU, без Qdrant
-- **Eval gate** (`router/.githooks/pre-push`): блокирует push при регрессии качества,
-  пропускает `style:`-коммиты и выдаёт `[INFRA-WARN]` вместо блокировки при протухшей сессии claude-cli
+- **Eval gate** (`router/.githooks/pre-push`): блокирует push при регрессии качества
 - **Auto DevOps отключён** на всех трёх проектах
-- **Версии запинены**: docker-compose использует `19.1.1-ce.0` и `v19.1.1`
-- **GPU runner** (`gitlab-runner-gpu`): контейнер поднят, ждёт регистрации
-- **K3s манифесты написаны**: router/deploy/ и MemGraphRAG/deploy/ в репо
-- **bks/bksamotsvety** добавлен в GitLab как pull-mirror от GitHub `rndkrkn-boop/bksamotsvety` (PAT);
-  35 CI/CD Variables (4 masked) — канонический источник секретов деплоя
+- **K3s v1.32.5** — установлен, node Ready, NVIDIA container toolkit настроен
+- **K3s манифесты** применены: MemGraphRAG + Qdrant работают, router namespace создан
+- **bks/bksamotsvety** добавлен в GitLab как pull-mirror от GitHub (PAT)
+- **Classifier улучшен**: fast-path роутинг (rule-based) + умное извлечение контента
+  (first\_user[:400] + last\_user[:400] вместо last\_msg[:600])
+- **S2L адаптеры обучены и задеплоены**:
+  - `security-lora-v1` (eval\_loss=0.024, acc=98.9%) — в vllm-classifier, `SECURITY_MODEL=security-lora-v1` активен
+  - `pii-cleaner-lora-v1` (eval\_loss=0.034, acc=99.1%) — в vllm-classifier (`/models/adapters/pii-cleaner-lora-v1`)
+- **Prometheus метрики добавлены**: `bks_router_routing_path_total`, `bks_router_security_events_total`
+- **GB10 workaround**: privileged pod + hostPath `/dev/nvidia*` + хирургические монты lib (libcuda, libnvidia-ptxjitcompiler)
 
 ---
 
@@ -83,27 +89,41 @@
 
 ---
 
-### Шаг 3 — Установить K3s
+### Шаг 3 — Установить K3s ✅ выполнено
 
-> Требует sudo. K3s не конфликтует с Docker — использует отдельный containerd.
+> K3s v1.32.5 установлен и работает.
 
 ```
 ! sudo bash /home/admin/servers/k3s/install.sh
 ```
 
-Скрипт делает:
-- Помещает `/etc/rancher/k3s/registries.yaml` (insecure mirror для `192.168.2.180:5050`)
-- Устанавливает K3s v1.32.5 с отключённым Traefik
-- Ждёт Ready node
-- Применяет NVIDIA device plugin
+#### GB10 Grace Blackwell: NVIDIA device plugin
 
-Ожидаемый вывод:
-```
-[1/4] Placing registry config...
-[2/4] Installing K3s v1.32.5+k3s1...
-[3/4] Waiting for K3s node to be Ready...
-  -> node is Ready
-[4/4] Installing NVIDIA device plugin (v0.17.0)...
+NVIDIA k8s-device-plugin v0.17.0 **не работает** с GB10 из коробки по двум причинам:
+
+1. `Incompatible strategy detected auto` — нужно настроить NVIDIA container toolkit для k3s containerd:
+   ```bash
+   ! sudo mkdir -p /var/lib/rancher/k3s/agent/etc/containerd
+   ! sudo nvidia-ctk runtime configure --runtime=containerd \
+       --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
+   ! sudo systemctl restart k3s
+   ```
+
+2. `error getting device memory: Not Supported` — GB10 unified memory не поддерживает
+   `nvmlDeviceGetMemoryInfo()`. Device plugin не может зарегистрировать GPU через стандартный путь.
+
+**Рабочий обходной путь для GB10** (однонодовый кластер): не используй `nvidia.com/gpu`
+resource request. Вместо этого монтируй `/dev/nvidia*` напрямую в privileged pod.
+Пример — см. `router/deploy/01-vllm-classifier.yaml`: `securityContext.privileged: true` +
+hostPath volumes для каждого устройства.
+
+#### Импорт образа vllm в k3s containerd
+
+vllm образ скачан в Docker (27GB) — в k3s containerd его нет. Импортируй один раз:
+```bash
+! docker save vllm/vllm-openai:nightly -o /tmp/vllm-nightly.tar
+! sudo k3s ctr images import /tmp/vllm-nightly.tar
+! rm /tmp/vllm-nightly.tar
 ```
 
 ---
@@ -345,25 +365,34 @@ CI (kaniko) собирает образ автоматически — `imagePul
 
 ---
 
-## Phase 5 — LoRA classifier (будущее)
+## Phase 5 — S2L адаптеры ✅ деплой завершён
 
-После того как K3s стабильно работает:
+### Security адаптер ✅ в продакшне
 
-1. **Обучить LoRA адаптер** на собранных `query_log.jsonl` данных:
-   ```bash
-   cd router/training && python train_lora.py --base Qwen/Qwen3.5-0.8B --output adapters/v1
-   ```
+`security-lora-v1` (eval\_loss=0.024, token\_acc=98.9%) загружен в vllm-classifier.
+`SECURITY_MODEL=security-lora-v1` прописан в `02-router.yaml` — security check активен для всех запросов `model=auto`.
 
-2. **Pre-deploy eval без перезапуска прода** — сравнить accuracy базовой модели и LoRA:
-   ```bash
-   CLASSIFIER_MODEL=adapters/v1 ./run.sh python3 eval/eval_classifier.py --dataset curated
-   ```
+Риск-события → `log.warning` + метрика `bks_router_security_events_total{level, category}`.
 
-3. **Переключить vllm-classifier на LoRA** через env в K3s манифесте:
-   ```bash
-   kubectl set env deployment/vllm-classifier -n bks-router \
-     CLASSIFIER_MODEL=/models/adapters/v1
-   ```
-   (или добавить `--lora-modules classifier-v1=/models/adapters/v1` в args и изменить `--served-model-name`)
+### PII cleaner адаптер ✅ в продакшне
 
-4. **Откатить** если accuracy упала: `kubectl rollout undo deployment/vllm-classifier -n bks-router`
+`pii-cleaner-lora-v1` (eval\_loss=0.034, token\_acc=99.1%) загружен в vllm-classifier.
+Обучен с flash-linear-attention (~6-7 сек/шаг, 1.8 часа на GB10 unified 120GB).
+Адаптер: `/home/admin/models/adapters/pii-cleaner-lora-v1/`
+
+Использование (офлайн-редакция PII):
+```bash
+# vllm-classifier отдаёт оба адаптера:
+curl http://192.168.2.180:30400/v1/models   # видны Qwen3.5-0.8B, security-lora-v1, pii-cleaner-lora-v1
+```
+
+### Classifier LoRA (будущее)
+
+После накопления `query_log.jsonl` трафика — переобучить классификатор tier на реальных данных:
+```bash
+cd router/training
+python3 train_adapter.py --adapter-name classifier-lora-v2 \
+    --train train.jsonl --val val.jsonl --epochs 3 --lora-rank 16
+```
+
+Откат: `kubectl rollout undo deployment/vllm-classifier -n bks-router`
