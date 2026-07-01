@@ -214,7 +214,7 @@ flowchart LR
         CLS["classifier.py\n:4000"]:::router
         VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\n:8000\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
         LL["LiteLLM proxy\n:4001"]:::router
-        CLS -->|"fast-path / LLM-classify\n+ security check"]| VLLM
+        CLS -->|"fast-path / LLM-classify\n+ security check"| VLLM
         VLLM -->|"tier + risk"| CLS
         CLS -->|proxy| LL
     end
