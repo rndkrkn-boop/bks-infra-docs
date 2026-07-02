@@ -58,13 +58,16 @@ flowchart LR
         VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
     end
 
-    subgraph K3S["K3s Cluster · 192.168.2.180"]
+    subgraph K3S["K3s Cluster · 192.168.2.180
+manifests: router/deploy/ +
+MemGraphRAG/deploy/"]
         subgraph NSM["memgraphrag"]
             MGR["MemGraphRAG :8000"]:::memory
         end
     end
 
-    subgraph APIS["Cloud LLM APIs"]
+    subgraph APIS["Cloud LLM APIs
+(openai/nvidia/... · anthropic/...]:::cloud]
         NV["NVIDIA\ncheap · mid · large"]:::cloud
         AC["Anthropic\nlarge fallback"]:::cloud
     end
@@ -106,7 +109,9 @@ flowchart TD
     PUSH(["git push\nGitLab · router/mgr/templates"]):::dev
     PUSHGH(["git push\nGitHub · bksamotsvety"]):::dev
 
-    subgraph HOOK["Pre-push Hook  ·  только router"]
+    subgraph HOOK["Pre-push Hook  ·  router only
+.githooks/pre-push
+5 файлов, style: пропуск"]
         H1{"файлы роутера\nизменились?"}:::stage
         H2{"все коммиты\nstyle: ?"}:::stage
         H3["eval/gate.py\nclaude-eval sandbox"]:::fail
@@ -137,21 +142,40 @@ flowchart TD
         end
         GHB -.->|"PAT pull mirror"| BM
 
-        subgraph PR["bks/router"]
-            R1["lint"]:::ci
-            R2["eval-config"]:::ci
-            R3["unit-test · 25"]:::ok
-            R4["kaniko build"]:::ci
+        subgraph PR["bks/router
+CI: .gitlab-ci.yml · 4 stage"]
+            R1["lint
+ruff check + format"]:::ci
+            R2["eval-config
+render + smoke"]:::ci
+            R3["test → unit-test
+25 тестов, junit report"]:::ok
+            R4["kaniko build
+--insecure
+main→latest
+dev→dev"]:::ci
             R1 --> R2 --> R3 --> R4
         end
-        subgraph PM["bks/memgraphrag"]
-            M1["lint"]:::ci
-            M2["unit-test · 12"]:::ok
-            M3["kaniko build"]:::ci
+        subgraph PM["bks/memgraphrag
+lint·test·build (3 stage)"]
+            M1["lint
+ruff check + format"]:::ci
+            M2["test
+pytest tests/
+54 total (3 files)"]:::ok
+            M3["kaniko build
+--timeout 30m
+HF cache: build-arg"]:::ci
             M1 --> M2 --> M3
         end
-        subgraph PS["bks/sandbox-templates"]
-            S1["validate-presets"]:::ok
+        subgraph PS["bks/sandbox-templates
+lint·validate"]
+            S1["lint
+ruff check"]:::ok
+            S2["validate-presets
+YAML parse + required keys
+(host·port·protocol·enforcement)"]:::ok
+            S1 --> S2
         end
     end  
 
@@ -327,6 +351,7 @@ flowchart TD
     classDef guard   fill:#7f1d1d,stroke:#f87171,color:#fff,stroke-width:2px
     classDef rule    fill:#78350f,stroke:#fbbf24,color:#fff,stroke-width:1px
     classDef cred    fill:#166534,stroke:#4ade80,color:#fff,stroke-width:2px
+    classDef note    fill:#1e293b,stroke:#94a3b8,color:#fbbf24,stroke-width:1px
 
     TIERS["OpenShell Policy Tiers\nrestricted ⊂ balanced ⊂ open\n(open — не используется в проде)"]:::tier
 
@@ -334,8 +359,11 @@ flowchart TD
         PH1["hermes-local\nlocal inference + git"]:::profile
         PH2["hermes-cloud\nоблачный провайдер + git"]:::profile
     end
-    subgraph CCPROF["Claude Code Profile"]
-        PC1["claude-code\nsandbox base"]:::profile
+    subgraph CCPROF["Claude Code Profile
+⚠ claude-code — НЕТ в NemoClaw
+tолько openclaw/manifest.yaml +
+policy-пресеты из sandbox-templates/"]:::note
+        PC1["openclaw sandbox base"]:::profile
     end
 
     TIERS --> HERMES & CCPROF
@@ -343,7 +371,7 @@ flowchart TD
     subgraph HPR["Hermes Presets"]
         PR1["github/gitlab-hermes\nread-only git\nMR/PR via API only"]:::preset
         PR2["internal-api.yaml\nrouter :4000\ndocker-compose\nmemgraphrag :8000\nSTT :10301"]:::preset
-        PR3["local-inference\nvLLM :8088 / Ollama :11434"]:::preset
+        PR3["local-inference\n⚠ НЕ в presets/\nапстрим NemoClaw\n(vLLM :8088 / Ollama :11434)"]:::preset
     end
     subgraph CPR["Claude Code Presets"]
         PR4["claude-code-strict\nтолько api.anthropic.com\nтелеметрия / sentry вырезаны"]:::preset
@@ -384,13 +412,15 @@ flowchart LR
 
     SRC["router/\nclassifier.py\nlitellm_config.yaml\nDockerfile"]:::src
 
-    subgraph UNIT["Unit Tests · pytest · без GPU"]
+    subgraph UNIT["Unit Tests · pytest · без GPU · 25 тестов"]
         TC["test_classifier.py\n11 тестов\nclassify() · routing\nAsyncMock HTTP"]:::unit
         TR["test_render_config.py\n14 тестов\nkey discovery · YAML"]:::unit
-        TM["MemGraphRAG/tests/\ntest_api.py · 12 тестов\nTestClient · sys.modules mock"]:::unit
+                TM["MemGraphRAG/tests/\ntest_api.py · 12 тестов\nTestClient · sys.modules mock\n(ещё 3 файла · 42 теста,\n54 total но не все collectable)"]:::unit
     end
 
-    subgraph GATE["Pre-push Eval Gate · router only"]
+    subgraph GATE["Pre-push Eval Gate · router only
+.githooks/pre-push → eval/sandbox/run.sh
+gate.py · 5 файлов, style: пропуск"]
         G1["gate.py\nbaseline comparison\navg correctness by tier"]:::gate
         G2["eval_router.py\ncheap/mid vs golden Sonnet"]:::gate
         G3["claude_cli.py\nclaude -p · ClaudeCliError"]:::gate
@@ -399,7 +429,7 @@ flowchart LR
         GP["✓ GATE: OK\n< 1.5 регрессии"]:::ok
         GF["✗ GATE: FAIL\nрегрессия ≥ 1.5\npass → fail curated"]:::fail
         G1 --> G2 --> G3 --> SB
-        SB -->|exit 1 session| GW
+        SB -->|session протухла| GW
         SB -->|в норме| GP
         SB -->|регрессия| GF
     end
@@ -413,7 +443,7 @@ flowchart LR
     end
 
     subgraph TRAIN["LoRA Training · Phase 5 · S2L ✅"]
-        GN["gen_dataset.py\njudge-разметка\nclaude-cli"]:::train
+                GN["generate_queries.py\njudge-разметка\nclaude-cli\n(≠gen_dataset.py НЕТ)"]:::train
         TL["train_classifier.py\nLoRA SFT · GPU\nQwen3.5-0.8B"]:::train
         EC2["eval_classifier.py\naccuracy vs baseline"]:::train
         GN --> TL --> EC2
