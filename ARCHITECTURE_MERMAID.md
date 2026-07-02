@@ -50,11 +50,13 @@ flowchart LR
         AG["8 Hermes Agents"]:::agent
     end
 
+    subgraph DCR["Docker Compose · host:4000 (production router)"]
+        DCR["router\nclassifier:4000 + litellm:4001\nSECURITY_MODEL=security-lora-v1"]:::router
+    end
+
     subgraph K3S["K3s Cluster · 192.168.2.180"]
-        subgraph NSR["bks-router"]
-            RT["router :30400\nSECURITY_MODEL=security-lora-v1"]:::router
+        subgraph NSR["bks-router (GPU only)"]
             VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
-            RT <-->|"classify + security_check"| VLLM
         end
         subgraph NSM["memgraphrag"]
             MGR["MemGraphRAG :8000"]:::memory
@@ -71,14 +73,16 @@ flowchart LR
     REG -.->|pull on restart| K3S
 
     TG --> AG
-    AG -->|/v1/chat/completions| RT
-    RT -->|proxy| NV & AC
+    AG -->|/v1/chat/completions| DCR
+    DCR -->|"http://vllm-classifier:8000"| VLLM
+    DCR -->|proxy| NV & AC
     AG -->|episodes · retrieve| MGR
 
     style GH     fill:none,stroke:#475569,stroke-width:2px
     style GITLAB  fill:none,stroke:#c2410c,stroke-width:2px
     style SAND    fill:none,stroke:#15803d,stroke-width:2px
-    style K3S     fill:none,stroke:#1d4ed8,stroke-width:2px
+    style DC      fill:none,stroke:#1d4ed8,stroke-width:2px
+    style K3S     fill:none,stroke:#6d28d9,stroke-width:2px
     style NSR     fill:none,stroke:#3b82f6,stroke-width:1px,stroke-dasharray:4
     style NSM     fill:none,stroke:#f59e0b,stroke-width:1px,stroke-dasharray:4
     style APIS    fill:none,stroke:#0369a1,stroke-width:2px
@@ -210,12 +214,12 @@ flowchart LR
     TGM --> MKT & MM
     AN & MM -.->|дайджест| TGM
 
-    subgraph ROUTER["Router  ·  NodePort :30400"]
+    subgraph ROUTER["Docker Compose Router · :4000"]
         CLS["classifier.py\n:4000"]:::router
-        VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\n:8000\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
+        VLLM_K["vllm-classifier\nQwen3.5-0.8B · GPU\n:8000\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
         LL["LiteLLM proxy\n:4001"]:::router
-        CLS -->|"fast-path / LLM-classify\n+ security check"| VLLM
-        VLLM -->|"tier + risk"| CLS
+        CLS -->|"fast-path / LLM-classify\n+ security check"| VLLM_K
+        VLLM_K -->|"tier + risk"| CLS
         CLS -->|proxy| LL
     end
 
@@ -266,20 +270,10 @@ flowchart TD
     subgraph K3S["K3s · 192.168.2.180  ✅ Running"]
         NVP["nvidia-device-plugin\nDaemonSet · kube-system\n⚠ GB10: nvmlGetMemoryInfo\nNot Supported — bypassed"]:::plugin
 
-        subgraph NSR["namespace: bks-router"]
-            CM["ConfigMap\nlitellm_config.base.yaml"]:::cm
-            SECR["Secret\nrouter-apikeys\nNVIDIA_API_KEY_N\nANTHROPIC_API_KEY"]:::secret
-
+        subgraph NSR["namespace: bks-router\n(router DELETED 2026-07-02 ✓)"]
             VD["Deployment\nvllm-classifier ✅\nvllm-openai:nightly\nprivileged + /dev/nvidia*\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
             SV["Service\nClusterIP :8000"]:::svc
-
-            RD["Deployment\nrouter ✅\nbks/router:latest\nclassifier.py + litellm\nSECURITY_MODEL=security-lora-v1\nsupervisord"]:::deploy
-            SR["Service\nNodePort 30400 → 4000"]:::svc
-
-            CM & SECR --> RD
             VD --> SV
-            SV -->|"svc:8000/v1"| RD
-            RD --> SR
         end
 
         subgraph NSM["namespace: memgraphrag"]
@@ -304,16 +298,21 @@ flowchart TD
         NVP -.->|"bypassed (GB10)"| VD
     end
 
-    REG -->|imagePullPolicy: Always| RD & MD
+    REG -->|imagePullPolicy: Always| VD & MD
     DISK -->|hostPath mount| VD
 
+    subgraph DCR["Docker Compose · host:4000 (production router)"]
+        RD["router\nclassifier:4000 + litellm:4001"]:::deploy
+    end
+
     AG(["Agents\nOpenShell sandbox"]):::agent
-    AG -->|":30400"| SR
+    AG -->|:4000| RD
     AG -->|"svc:8000"| SMS
 
     style K3S fill:none,stroke:#1d4ed8,stroke-width:3px
     style NSR fill:none,stroke:#3b82f6,stroke-width:2px,stroke-dasharray:5
     style NSM fill:none,stroke:#f59e0b,stroke-width:2px,stroke-dasharray:5
+    style DCR fill:none,stroke:#1d4ed8,stroke-width:2px
 ```
 
 ---
@@ -343,7 +342,7 @@ flowchart TD
 
     subgraph HPR["Hermes Presets"]
         PR1["github/gitlab-hermes\nread-only git\nMR/PR via API only"]:::preset
-        PR2["internal-api.yaml\nrouter :30400\nmemgraphrag :8000\nSTT :10301"]:::preset
+        PR2["internal-api.yaml\nrouter :4000\ndocker-compose\nmemgraphrag :8000\nSTT :10301"]:::preset
         PR3["local-inference\nvLLM :8088 / Ollama :11434"]:::preset
     end
     subgraph CPR["Claude Code Presets"]

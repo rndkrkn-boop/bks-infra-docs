@@ -5,7 +5,7 @@
 
 ---
 
-## Состояние на 2026-07-01
+## Состояние на 2026-07-02
 
 ### Инфраструктура (хост `192.168.2.180`)
 
@@ -15,13 +15,12 @@
 | GitLab Runner (CPU) | `gitlab-runner` | — | ✅ зарегистрирован |
 | GitLab Runner (GPU) | `gitlab-runner-gpu` | — | ⚠️ контейнер поднят, **регистрация не завершена** |
 | vLLM classifier | `router-vllm-classifier` | внутренний | ✅ healthy |
-| LiteLLM + classifier | `router-proxy` | 4000, 4001 | ✅ healthy |
+| Router (docker-compose) | `router-proxy` | 4000, 4001 | ✅ production (с 2026-07-02) |
 | vLLM Qwen3.6-35B | `vllm-Qwen3.6-35B-A3B-NVFP4` | 8088 | ✅ running |
 | MemGraphRAG (test) | `memgraphrag-test-qdrant` | 16333 | ✅ running |
 | Whisper STT | `whisper-openai` | 10301 | ✅ running |
 | K3s v1.32.5 | — | — | ✅ установлен, node Ready |
-| vllm-classifier (K3s) | pod `bks-router` | 8000 (ClusterIP) | ✅ Running, LoRA loaded |
-| router (K3s) | pod `bks-router` | 30400 (NodePort) | ✅ Running, SECURITY_MODEL active |
+| vllm-classifier (K3s) | pod `bks-router` | 8000 (ClusterIP) | ✅ Running, LoRA loaded (GPU backend для docker-compose роутера) |
 
 ### GitLab репозитории
 
@@ -237,12 +236,15 @@ ROUTER_URL=http://192.168.2.180:30400
 
 ### Обновить образ роутера после push в main
 
+> **Важно:** с 2026-07-02 роутер работает через docker-compose, НЕ через K8s.
+> Для обновления docker-compose роутера:
 ```bash
-! kubectl rollout restart deployment/router -n bks-router
-! kubectl rollout status deployment/router -n bks-router
+! cd /home/admin/projects/nemohermes_bks/router && docker compose pull && docker compose up -d
 ```
 
-CI (kaniko) собирает образ автоматически — `imagePullPolicy: Always` подхватит его при рестарте.
+#### K8s router — удалён 2026-07-02 (см. §2.5 ARCHITECTURE.md)
+> `kubectl -n bks-router delete deployment/router` — K8s router больше не используется.
+> Docker-compose роутер на порту 4000 — primary production router.
 
 ### Обновить образ MemGraphRAG
 
@@ -253,32 +255,24 @@ CI (kaniko) собирает образ автоматически — `imagePul
 ### Посмотреть логи
 
 ```bash
-! kubectl logs -n bks-router deployment/router -f --tail=50
+# Docker Compose router (production, port 4000)
+! cd /home/admin/projects/nemohermes_bks/router && docker compose logs -f --tail=50
+
+# K3s vllm-classifier (GPU backend)
 ! kubectl logs -n bks-router deployment/vllm-classifier -f --tail=50
 ! kubectl logs -n memgraphrag deployment/memgraphrag -f --tail=50
 ```
 
-### Изменить litellm routing без пересборки образа
+### Обновить docker-compose роутер
 
 ```bash
-! kubectl edit configmap litellm-base-config -n bks-router
-! kubectl rollout restart deployment/router -n bks-router
+! cd /home/admin/projects/nemohermes_bks/router && docker compose pull && docker compose up -d
 ```
 
-### Добавить NVIDIA API ключ в роутер
+### Перезапустить docker-compose роутер
 
 ```bash
-! kubectl patch secret router-apikeys -n bks-router \
-    -p '{"stringData":{"NVIDIA_API_KEY_2":"nvapi-..."}}'
-! kubectl rollout restart deployment/router -n bks-router
-```
-
-`render_litellm_config.py` обнаружит новый ключ по паттерну `NVIDIA_API_KEY_N` и добавит балансировку.
-
-### Откатить деплой router
-
-```bash
-! kubectl rollout undo deployment/router -n bks-router
+! cd /home/admin/projects/nemohermes_bks/router && docker compose restart
 ```
 
 ### Запустить eval gate вручную
@@ -318,8 +312,7 @@ CI (kaniko) собирает образ автоматически — `imagePul
 | GitLab web | http://192.168.2.180:8929 | admin панель |
 | GitLab SSH | ssh://192.168.2.180:2222 | `git remote set-url origin ssh://git@192.168.2.180:2222/bks/...` |
 | Container registry | 192.168.2.180:5050 | insecure HTTP, логин: `docker login 192.168.2.180:5050` |
-| Router (docker-compose, текущий прод) | http://192.168.2.180:4000 | до K3s |
-| Router (K3s NodePort, после шага 6) | http://192.168.2.180:30400 | классификатор |
+| Router (docker-compose production) | http://192.168.2.180:4000 | primary router (с 2026-07-02) |
 | LiteLLM proxy (прямой) | http://192.168.2.180:4001 | |
 | vLLM Qwen3.6-35B | http://192.168.2.180:8088/v1 | large-tier локальный |
 | MemGraphRAG (K3s ClusterIP) | http://memgraphrag.memgraphrag.svc:8000 | только внутри K3s |
@@ -350,13 +343,13 @@ CI (kaniko) собирает образ автоматически — `imagePul
 
 /home/admin/projects/nemohermes_bks/router/
   docker-compose.yml          — текущий прод (docker)
-  .env                        — NVIDIA_API_KEY + ANTHROPIC_API_KEY + LITELLM_MASTER_KEY
+  .env                        — NVIDIA_API_KEY + ANTHROPIC_API_KEY
   .githooks/pre-push          — eval gate (git config core.hooksPath .githooks)
   eval/gate.py                — качественный регрессионный гейт
   deploy/
     00-namespace.yaml         — K3s namespace bks-router
     01-vllm-classifier.yaml   — GPU Deployment (Qwen3.5-0.8B)
-    02-router.yaml            — ConfigMap + Secret + Deployment + NodePort 30400
+    02-router.yaml            — ⚠ УДАЛЁН из K8s 2026-07-02 (сохранён как документация)
 
 /home/admin/projects/nemohermes_bks/MemGraphRAG/deploy/
   qdrant-k3s.yaml             — namespace memgraphrag + Qdrant PVC + Deployment
@@ -370,7 +363,7 @@ CI (kaniko) собирает образ автоматически — `imagePul
 ### Security адаптер ✅ в продакшне
 
 `security-lora-v1` (eval\_loss=0.024, token\_acc=98.9%) загружен в vllm-classifier.
-`SECURITY_MODEL=security-lora-v1` прописан в `02-router.yaml` — security check активен для всех запросов `model=auto`.
+`SECURITY_MODEL=security-lora-v1` активен для всех запросов `model=auto` через docker-compose роутер.
 
 Риск-события → `log.warning` + метрика `bks_router_security_events_total{level, category}`.
 
@@ -382,8 +375,9 @@ CI (kaniko) собирает образ автоматически — `imagePul
 
 Использование (офлайн-редакция PII):
 ```bash
-# vllm-classifier отдаёт оба адаптера:
-curl http://192.168.2.180:30400/v1/models   # видны Qwen3.5-0.8B, security-lora-v1, pii-cleaner-lora-v1
+# Проверяем модели с GPU бэкенда vllm-classifier:
+curl http://vllm-classifier.bks-router.svc:8000/v1/models   # видны Qwen3.5-0.8B, security-lora-v1, pii-cleaner-lora-v1
+# (изнутри K3s); снаружи: docker-compose роутер → vllm-classifier:8000
 ```
 
 ### Classifier LoRA (будущее)
