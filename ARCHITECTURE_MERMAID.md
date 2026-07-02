@@ -50,14 +50,15 @@ flowchart LR
         AG["8 Hermes Agents"]:::agent
     end
 
-    subgraph DCR["Docker Compose · host:4000 (production router)"]
+    subgraph DC["Docker Compose · host:4000 (production router)"]
         DCR["router\nclassifier:4000 + litellm:4001\nSECURITY_MODEL=security-lora-v1"]:::router
     end
 
+    subgraph GB10["GPU Hardware · GB10 Grace-Blackwell\nvllm-classifier (не K8s)"]
+        VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
+    end
+
     subgraph K3S["K3s Cluster · 192.168.2.180"]
-        subgraph NSR["bks-router (GPU only)"]
-            VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
-        end
         subgraph NSM["memgraphrag"]
             MGR["MemGraphRAG :8000"]:::memory
         end
@@ -82,9 +83,8 @@ flowchart LR
     style GITLAB  fill:none,stroke:#c2410c,stroke-width:2px
     style SAND    fill:none,stroke:#15803d,stroke-width:2px
     style DC      fill:none,stroke:#1d4ed8,stroke-width:2px
-    style K3S     fill:none,stroke:#6d28d9,stroke-width:2px
-    style NSR     fill:none,stroke:#3b82f6,stroke-width:1px,stroke-dasharray:4
-    style NSM     fill:none,stroke:#f59e0b,stroke-width:1px,stroke-dasharray:4
+    style GB10    fill:none,stroke:#6d28d9,stroke-width:2px
+    style K3S     fill:none,stroke:#374151,stroke-width:2px
     style APIS    fill:none,stroke:#0369a1,stroke-width:2px
 ```
 
