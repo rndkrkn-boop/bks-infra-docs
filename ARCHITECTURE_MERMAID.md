@@ -67,7 +67,7 @@ MemGraphRAG/deploy/"]
     end
 
     subgraph APIS["Cloud LLM APIs
-(openai/nvidia/... · anthropic/...]:::cloud]
+(openai/nvidia/... · anthropic/...)"]
         NV["NVIDIA\ncheap · mid · large"]:::cloud
         AC["Anthropic\nlarge fallback"]:::cloud
     end
@@ -362,7 +362,7 @@ flowchart TD
     subgraph CCPROF["Claude Code Profile
 ⚠ claude-code — НЕТ в NemoClaw
 tолько openclaw/manifest.yaml +
-policy-пресеты из sandbox-templates/"]:::note
+policy-пресеты из sandbox-templates/"]
         PC1["openclaw sandbox base"]:::profile
     end
 
