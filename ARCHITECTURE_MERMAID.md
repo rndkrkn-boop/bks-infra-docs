@@ -9,7 +9,7 @@
 | 🟤 Тёмно-серый | Developer / внешние участники |
 | 🟠 Оранжевый | GitLab CI / Pipeline stages |
 | 🟢 Зелёный | Агенты Hermes |
-| 🔵 Синий | Роутер / K3s Deployments / Services |
+| 🔵 Синий | Роутер / docker-compose сервисы |
 | 🟣 Фиолетовый | GPU / vLLM / Security |
 | 🩵 Голубой | Cloud LLM APIs |
 | 🟡 Янтарный | Хранилище (PVC, Storage, Secret) |
@@ -39,11 +39,10 @@ flowchart LR
     end
 
     subgraph GITLAB["GitLab CE · :8929"]
-        GL["CI Pipeline\nrouter · memgraphrag\nsandbox-templates"]:::ci
+        GL["CI Pipeline\nrouter · memgraphrag\nsandbox-templates · host-infra"]:::ci
         REG[("Registry :5050")]:::registry
-        GLBKS["bks/bksamotsvety\npull mirror · CI/CD Vars"]:::ci
+        GLBKS["bks/bksamotsvety\nнезависимый push · CI/CD Vars"]:::ci
         GL -->|kaniko| REG
-        GHBKS -.->|"pull mirror\nPAT"| GLBKS
     end
 
     subgraph SAND["OpenShell Sandbox  bks-production"]
@@ -58,13 +57,11 @@ flowchart LR
         VLLM["vllm-classifier\nQwen3.5-0.8B · GPU\nsecurity-lora-v1 · pii-cleaner-lora-v1"]:::vllm
     end
 
-    subgraph K3S["K3s Cluster · 192.168.2.180
-manifests: router/deploy/ +
-MemGraphRAG/deploy/"]
-        subgraph NSM["memgraphrag"]
-            MGR["MemGraphRAG :8000"]:::memory
-        end
+    subgraph MGC["Docker Compose · memgraphrag (K3s декомиссирован 2026-07-06)"]
+        MGR["memgraphrag :8010\n+ qdrant · внутр. сеть"]:::memory
     end
+
+    WD["bks/host-infra · systemd-таймеры\nwatchdog / 5 мин · backup 03:00"]:::external
 
     subgraph APIS["Cloud LLM APIs
 (openai/nvidia/... · anthropic/...)"]
@@ -72,22 +69,25 @@ MemGraphRAG/deploy/"]
         AC["Anthropic\nlarge fallback"]:::cloud
     end
 
-    DEV -->|"git push\nbksamotsvety"| GHBKS
-    DEV -->|"git push\nrouter · mgr · templates"| GL
-    REG -.->|pull on restart| K3S
+    DEV -->|"git push\nbksamotsvety (бэкап)"| GHBKS
+    DEV -->|"git push\nrouter · mgr · templates · host-infra"| GL
+    DEV -->|"git push\nbksamotsvety"| GLBKS
+    REG -.->|"docker compose pull\n(deploy job)"| DCR & MGR
 
     TG --> AG
     AG -->|/v1/chat/completions| DCR
     DCR -->|"http://vllm-classifier:8000"| VLLM
     DCR -->|proxy| NV & AC
-    AG -->|episodes · retrieve| MGR
+    AG -->|"episodes · retrieve\nhost.openshell.internal:8010"| MGR
+    WD -.->|"health · unhealthy · disk · gpu"| DCR & MGR & AG
+    WD -.->|алерты| TG
 
     style GH     fill:none,stroke:#475569,stroke-width:2px
     style GITLAB  fill:none,stroke:#c2410c,stroke-width:2px
     style SAND    fill:none,stroke:#15803d,stroke-width:2px
     style DC      fill:none,stroke:#1d4ed8,stroke-width:2px
     style GB10    fill:none,stroke:#6d28d9,stroke-width:2px
-    style K3S     fill:none,stroke:#374151,stroke-width:2px
+    style MGC     fill:none,stroke:#f59e0b,stroke-width:2px
     style APIS    fill:none,stroke:#0369a1,stroke-width:2px
 ```
 
@@ -193,6 +193,16 @@ YAML parse + required keys
 (host·port·protocol·enforcement)"]:::ok
             S1 --> S2
         end
+        subgraph PH["bks/host-infra
+CI: .gitlab-ci.yml · 2 stage"]
+            HI1["lint
+shellcheck"]:::ci
+            HI2["deploy (gb10-shell)
+tar → /home/admin/servers
+через helper-контейнер
++ drift-check systemd-юнитов"]:::ok
+            HI1 --> HI2
+        end
     end  
 
     R5 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
@@ -201,7 +211,7 @@ YAML parse + required keys
     subgraph RUN["Runners"]
         RC["bks-docker-runner\ndocker · CPU"]:::runner
         RG["bks-gpu-runner\ndocker + nvidia CDI\ntags: gpu"]:::runner
-        RS["gb10-shell\nshell executor, на самом хосте\ndeploy router/memgraphrag/bksamotsvety"]:::runner
+        RS["gb10-shell\nshell executor · project-runner\n(новые проекты привязывать вручную)\ndeploy router/memgraphrag/\nbksamotsvety/host-infra\ncompose-def контейнера: bks/host-infra"]:::runner
     end
     GL -.->|executes jobs| RUN
 
@@ -216,6 +226,7 @@ YAML parse + required keys
     style PR   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PM   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PS   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
+    style PH   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style RUN  fill:none,stroke:#374151,stroke-width:2px
 ```
 
@@ -276,7 +287,7 @@ flowchart LR
     end
     LL --> NV & AC
 
-    MGR["MemGraphRAG\n/api/episodes\n/api/retrieve"]:::memory
+    MGR["MemGraphRAG :8010\nhost.openshell.internal\n/api/episodes · /api/retrieve"]:::memory
     WEB(["Internet\nnous-web"]):::ext
     STT["STT :10301\nfaster-whisper\nlarge-v3"]:::ext
 
@@ -294,70 +305,55 @@ flowchart LR
 
 ---
 
-## 4 · K3s Infrastructure
+## 4 · Host Infrastructure (K3s декомиссирован 2026-07-06)
+
+> Было: K3s с namespace `memgraphrag` (+ `bks-router` до 2026-07-02).
+> Стало: всё в docker-compose на хосте, надзор — systemd-таймеры из
+> `bks/host-infra` (сознательно слоем НИЖЕ docker — сторож переживает
+> отказ docker daemon, см. ARCHITECTURE.md §2.6).
+> K8s-манифесты сохранены как документация: `MemGraphRAG/deploy/*-k3s.yaml` (deprecated).
 
 ```mermaid
 flowchart TD
     classDef reg    fill:#7f1d1d,stroke:#dc2626,color:#fff,stroke-width:2px
     classDef deploy fill:#1d4ed8,stroke:#60a5fa,color:#fff,stroke-width:2px
     classDef vllm   fill:#6d28d9,stroke:#a78bfa,color:#fff,stroke-width:2px
-    classDef svc    fill:#1e40af,stroke:#93c5fd,color:#fff,stroke-width:1px
-    classDef pvc    fill:#78350f,stroke:#f59e0b,color:#fff,stroke-width:1px
-    classDef secret fill:#7f1d1d,stroke:#f87171,color:#fff,stroke-width:1px
-    classDef cm     fill:#374151,stroke:#9ca3af,color:#fff,stroke-width:1px
-    classDef plugin fill:#5b21b6,stroke:#c4b5fd,color:#fff,stroke-width:2px
+    classDef memory fill:#92400e,stroke:#fbbf24,color:#fff,stroke-width:1px
+    classDef sysd   fill:#166534,stroke:#4ade80,color:#fff,stroke-width:2px
+    classDef data   fill:#78350f,stroke:#f59e0b,color:#fff,stroke-width:1px
     classDef agent  fill:#15803d,stroke:#22c55e,color:#fff,stroke-width:2px
-    classDef disk   fill:#374151,stroke:#6b7280,color:#fff,stroke-width:1px
+    classDef dead   fill:#1e293b,stroke:#475569,color:#94a3b8,stroke-width:1px
+    classDef tg     fill:#0369a1,stroke:#38bdf8,color:#fff,stroke-width:1px
 
-    REG[("Registry\n192.168.2.180:5050")]:::reg
-    DISK[("hostPath\n/home/admin/models\nQwen3.5-0.8B\n+ adapters/")]:::disk
+    K3SDEAD["K3s ДЕКОМИССИРОВАН 2026-07-06\nnamespace memgraphrag удалён\nnvidia-device-plugin удалён\nk3s.service stopped + disabled"]:::dead
 
-    subgraph K3S["K3s · 192.168.2.180  ✅ Running"]
-        NVP["nvidia-device-plugin\nDaemonSet · kube-system\n⚠ GB10: nvmlGetMemoryInfo\nNot Supported — bypassed"]:::plugin
+    TGA(["✈️ Telegram\nканал алертов"]):::tg
 
-        subgraph NSR["namespace: bks-router\n(router DELETED 2026-07-02 ✓)"]
-            VD["Deployment\nvllm-classifier ✅\nvllm-openai:nightly\nprivileged + /dev/nvidia*\nsecurity-lora-v1\npii-cleaner-lora-v1"]:::vllm
-            SV["Service\nClusterIP :8000"]:::svc
-            VD --> SV
+    subgraph HOST["Хост 192.168.2.180"]
+        subgraph SYSD["systemd — нижний supervision-слой · bks/host-infra"]
+            WD["bks-watchdog.timer · 5 мин\nrouter · memgraphrag · контейнеры\nsandbox · supervisord · kanban\nбэкап < 26ч · диск < 85% · GPU"]:::sysd
+            BK["bks-backup.timer · 03:00\nkanban.db ×5 · профили Hermes\nmemgraphrag data · qdrant\nретенция 7 дней"]:::sysd
         end
 
-        subgraph NSM["namespace: memgraphrag"]
-            SQ["Secret\nqdrant-apikey"]:::secret
-            SM["Secret\nmemgraphrag-apikey"]:::secret
-            PQ[("PVC qdrant-data\n20 Gi")]:::pvc
-            PM[("PVC memgraphrag-data\n10 Gi")]:::pvc
-
-            QD["Deployment\nqdrant\nqdrant:v1.9.7"]:::deploy
-            SQS["Service\nClusterIP :6333"]:::svc
-
-            MD["Deployment\nmemgraphrag\nbks/memgraphrag:latest\nContriever · igraph · SQLite"]:::deploy
-            SMS["Service\nClusterIP :8000"]:::svc
-
-            SQ & PQ --> QD
-            QD --> SQS
-            SQS -->|"svc:6333"| MD
-            SM & PM --> MD
-            MD --> SMS
+        subgraph DOCKER["docker · compose-стеки"]
+            RTR["router\nclassifier :4000 + litellm :4001\nvllm-classifier (LoRA · GPU)"]:::deploy
+            MGR["memgraphrag :8010\nqdrant (внутр. сеть)\nTRANSFORMERS_OFFLINE=1"]:::memory
+            GLB["gitlab :8929 · registry :5050\nrunners: docker · gpu ·\ngitlab-runner-shell (gb10-shell,\ncompose-def в bks/host-infra,\ngroup_add: DOCKER_GID)"]:::deploy
+            SBX["OpenShell sandbox\nbks-production\nsupervisord: gw-director-bot\ngw-mkt-bot · gw-experiment"]:::agent
         end
 
-        NVP -.->|"bypassed (GB10)"| VD
+        DATA[("bind mounts:\n/home/admin/servers/*\nбэкапы: /home/admin/backups/bks/")]:::data
     end
 
-    REG -->|imagePullPolicy: Always| VD & MD
-    DISK -->|hostPath mount| VD
+    WD -.->|"health / unhealthy /\nready-проверки"| RTR & MGR & SBX
+    WD -.->|"OK→FAIL · FAIL→OK\nсводка 09:00"| TGA
+    BK -->|"VACUUM INTO · tar"| DATA
+    WD -.->|"свежесть бэкапа"| DATA
+    RTR & MGR --> DATA
 
-    subgraph DCR["Docker Compose · host:4000 (production router)"]
-        RD["router\nclassifier:4000 + litellm:4001"]:::deploy
-    end
-
-    AG(["Agents\nOpenShell sandbox"]):::agent
-    AG -->|:4000| RD
-    AG -->|"svc:8000"| SMS
-
-    style K3S fill:none,stroke:#1d4ed8,stroke-width:3px
-    style NSR fill:none,stroke:#3b82f6,stroke-width:2px,stroke-dasharray:5
-    style NSM fill:none,stroke:#f59e0b,stroke-width:2px,stroke-dasharray:5
-    style DCR fill:none,stroke:#1d4ed8,stroke-width:2px
+    style HOST   fill:none,stroke:#475569,stroke-width:2px
+    style SYSD   fill:none,stroke:#166534,stroke-width:2px
+    style DOCKER fill:none,stroke:#1d4ed8,stroke-width:2px
 ```
 
 ---
