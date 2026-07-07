@@ -106,8 +106,8 @@ flowchart TD
     classDef runner fill:#374151,stroke:#9ca3af,color:#fff,stroke-width:1px
     classDef reg    fill:#7f1d1d,stroke:#dc2626,color:#fff,stroke-width:2px
 
-    PUSH(["git push\nGitLab · router/mgr/templates"]):::dev
-    PUSHGH(["git push\nGitHub · bksamotsvety"]):::dev
+    PUSH(["git push\nGitLab · router/mgr/templates/bksamotsvety"]):::dev
+    PUSHGH(["git push\nGitHub · bksamotsvety (личный бэкап,\nбез auto-mirror)"]):::dev
 
     subgraph HOOK["Pre-push Hook  ·  router only
 .githooks/pre-push
@@ -132,18 +132,17 @@ flowchart TD
     HF -->|"git push\n--no-verify"| GL
 
     subgraph GH["GitHub"]
-        GHB["rndkrkn-boop/bksamotsvety"]:::runner
+        GHB["rndkrkn-boop/bksamotsvety\n(независимый бэкап)"]:::runner
     end
     PUSHGH --> GHB
 
     subgraph GL["GitLab CE"]
-        subgraph PB["bks/bksamotsvety"]
-            BM["pull mirror\nCI/CD Variables: 35"]:::runner
+        subgraph GV["Group bks — CI/CD Variables"]
+            GVAR["LITELLM_MASTER_KEY · LITE_LLM_ENDPOINT\nMEMGRAPHRAG_API_KEY · QDRANT_API_KEY\n(общие, без переименований на границах)"]:::runner
         end
-        GHB -.->|"PAT pull mirror"| BM
 
         subgraph PR["bks/router
-CI: .gitlab-ci.yml · 4 stage"]
+CI: .gitlab-ci.yml · 5 stage"]
             R1["lint
 ruff check + format"]:::ci
             R2["eval-config
@@ -154,10 +153,14 @@ render + smoke"]:::ci
 --insecure
 main→latest
 dev→dev"]:::ci
-            R1 --> R2 --> R3 --> R4
+            R5["deploy (gb10-shell)
+docker compose up -d
++ health-check
++ sync-trigger → BK2"]:::ci
+            R1 --> R2 --> R3 --> R4 --> R5
         end
         subgraph PM["bks/memgraphrag
-lint·test·build (3 stage)"]
+lint·test·build·deploy (4 stage)"]
             M1["lint
 ruff check + format"]:::ci
             M2["test
@@ -166,7 +169,20 @@ pytest tests/
             M3["kaniko build
 --timeout 30m
 HF cache: build-arg"]:::ci
-            M1 --> M2 --> M3
+            M4["deploy (gb10-shell)
+docker compose up -d
++ health-check
++ sync-trigger → BK2"]:::ci
+            M1 --> M2 --> M3 --> M4
+        end
+        subgraph PB["bks/bksamotsvety
+CI: .gitlab-ci.yml · 2 stage"]
+            BK1["lint
+shellcheck deploy/*.sh"]:::ci
+            BK2["sync (gb10-shell)
+deploy/.env ← group+project vars
++ sync-profiles.sh"]:::ok
+            BK1 --> BK2
         end
         subgraph PS["bks/sandbox-templates
 lint·validate"]
@@ -179,9 +195,13 @@ YAML parse + required keys
         end
     end  
 
+    R5 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
+    M4 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
+
     subgraph RUN["Runners"]
         RC["bks-docker-runner\ndocker · CPU"]:::runner
         RG["bks-gpu-runner\ndocker + nvidia CDI\ntags: gpu"]:::runner
+        RS["gb10-shell\nshell executor, на самом хосте\ndeploy router/memgraphrag/bksamotsvety"]:::runner
     end
     GL -.->|executes jobs| RUN
 
@@ -191,6 +211,7 @@ YAML parse + required keys
     style HOOK fill:none,stroke:#7f1d1d,stroke-width:2px
     style GH   fill:none,stroke:#475569,stroke-width:2px
     style GL   fill:none,stroke:#c2410c,stroke-width:2px
+    style GV   fill:none,stroke:#6b7280,stroke-width:1px,stroke-dasharray:4
     style PB   fill:none,stroke:#6b7280,stroke-width:1px,stroke-dasharray:4
     style PR   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PM   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4

@@ -40,10 +40,10 @@
 
 | Репо | Источник | CI-пайплайн | Статус |
 |---|---|---|---|
-| bks/router | GitLab (primary) | lint → eval-config → unit-test(25) → build | ✅ зелёный |
+| bks/router | GitLab (primary) | lint → eval-config → unit-test(25) → build → deploy | ✅ зелёный |
 | bks/sandbox-templates | GitLab (primary) | validate-presets | ✅ зелёный |
-| bks/memgraphrag | GitLab (primary) | lint → unit-test(12) → build | ✅ зелёный |
-| bks/bksamotsvety | GitHub `rndkrkn-boop/bksamotsvety` (pull mirror, PAT) | нет CI; 35 CI/CD Variables | ✅ mirror настроен |
+| bks/memgraphrag | GitLab (primary) | lint → unit-test(12) → build → deploy | ✅ зелёный |
+| bks/bksamotsvety | GitLab (primary) + `git push` в GitHub `rndkrkn-boop/bksamotsvety` (личный бэкап, без auto-mirror) | lint (shellcheck) → sync — деплой `router`/`memgraphrag` триггерит `sync` напрямую после своего health-check (`SYNC_ONLY=true`), см. §0 ARCHITECTURE.md | добавлено 2026-07-07; group+project CI/CD Variables, часть group-переменных ещё не заведена в GitLab UI (см. §0 ARCHITECTURE.md) |
 
 ---
 
