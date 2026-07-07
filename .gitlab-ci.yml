@@ -16,13 +16,15 @@ mermaid-render:
   script:
     - mkdir -p /tmp/diagrams
     - awk '/^```mermaid$/{f=1;n++;next} /^```/{f=0} f{print > ("/tmp/diagrams/d" n ".mmd")}' ARCHITECTURE_MERMAID.md
-    - echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
-    # mmdc не в PATH образа (мы обнуляем entrypoint) — полный путь
+    # Мы обнуляем entrypoint образа, поэтому воспроизводим его вручную:
+    # mmdc не в PATH, а chrome НЕ запечён в образ (PUPPETEER_SKIP_DOWNLOAD) —
+    # системный chromium прописан в родном /puppeteer-config.json
+    # (executablePath + --no-sandbox). Свой конфиг не подсовывать!
     - export MMDC=/home/mermaidcli/node_modules/.bin/mmdc
     - |
       rc=0
       for f in /tmp/diagrams/*.mmd; do
-        if "$MMDC" -p /tmp/pptr.json -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>/tmp/err.log; then
+        if "$MMDC" -p /puppeteer-config.json -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>/tmp/err.log; then
           echo "OK   $f"
         else
           echo "FAIL $f"
