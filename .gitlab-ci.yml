@@ -17,10 +17,12 @@ mermaid-render:
     - mkdir -p /tmp/diagrams
     - awk '/^```mermaid$/{f=1;n++;next} /^```/{f=0} f{print > ("/tmp/diagrams/d" n ".mmd")}' ARCHITECTURE_MERMAID.md
     - echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
+    # mmdc не в PATH образа (мы обнуляем entrypoint) — полный путь
+    - export MMDC=/home/mermaidcli/node_modules/.bin/mmdc
     - |
       rc=0
       for f in /tmp/diagrams/*.mmd; do
-        if mmdc -p /tmp/pptr.json -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>/tmp/err.log; then
+        if "$MMDC" -p /tmp/pptr.json -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>/tmp/err.log; then
           echo "OK   $f"
         else
           echo "FAIL $f"
