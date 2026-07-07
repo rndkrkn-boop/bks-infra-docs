@@ -1,0 +1,46 @@
+stages:
+  - docs
+
+# ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
+# Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
+# «глазами» синтаксис уже пропускали (fix-коммит 8ed34df).
+mermaid-render:
+  stage: docs
+  image:
+    name: minlag/mermaid-cli:latest
+    entrypoint: [""]
+  rules:
+    - changes:
+        - ARCHITECTURE_MERMAID.md
+        - .gitlab-ci.yml
+  script:
+    - mkdir -p /tmp/diagrams
+    - awk '/^```mermaid$/{f=1;n++;next} /^```/{f=0} f{print > ("/tmp/diagrams/d" n ".mmd")}' ARCHITECTURE_MERMAID.md
+    - echo '{"args":["--no-sandbox"]}' > /tmp/pptr.json
+    - |
+      rc=0
+      for f in /tmp/diagrams/*.mmd; do
+        if mmdc -p /tmp/pptr.json -i "$f" -o "${f%.mmd}.svg" >/dev/null 2>/tmp/err.log; then
+          echo "OK   $f"
+        else
+          echo "FAIL $f"
+          cat /tmp/err.log
+          rc=1
+        fi
+      done
+      exit $rc
+
+# ── Анти-drift: текст и диаграммы не должны расходиться ──────────────────
+# Ловит возврат «прошлых эпох» (K3s Running, старые порты/DNS) и репо,
+# описанные только в одном из двух файлов. Детали — в самом скрипте.
+docs-consistency:
+  stage: docs
+  image: python:3.11-slim
+  rules:
+    - changes:
+        - ARCHITECTURE.md
+        - ARCHITECTURE_MERMAID.md
+        - scripts/check-docs-consistency.py
+        - .gitlab-ci.yml
+  script:
+    - python scripts/check-docs-consistency.py
