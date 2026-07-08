@@ -352,8 +352,13 @@ watchdog.env, state/, metrics.jsonl, backup.log, /home/admin/backups/bks/
 
 Grafana + Prometheus + Loki + Promtail — отдельный compose-проект
 `monitoring`: Grafana смотрит за всей системой, не только за роутером.
-Подключается к сети `router_default` и volumes `router_*` как external
-(zero-copy переезд, данные Grafana/Prometheus/Loki унаследованы).
+К router-стеку подключается external'ами: сеть `router_default`
+(скрейп по Docker DNS) и volume `router_router_logs` (читает логи
+роутера). Данные — в своих volume'ах `monitoring_*` (мигрированы из
+`router_*` 2026-07-08). Рост логов ограничен: stdout контейнеров —
+json-file 10m×3, Loki/Prometheus — retention 30d, metrics.jsonl
+watchdog — самозачистка через mv при >5 МБ (promtail-safe: новый
+inode, без дубликатов в Loki).
 
 Разделение ролей с watchdog (§2.6) — **взаимный надзор, без дублирующих
 алертов** (один инцидент = один канал тревоги):
