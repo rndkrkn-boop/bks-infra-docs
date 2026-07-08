@@ -39,7 +39,7 @@ flowchart LR
     end
 
     subgraph GITLAB["GitLab CE · :8929"]
-        GL["CI Pipeline\nrouter · memgraphrag\nsandbox-templates · host-infra"]:::ci
+        GL["CI Pipeline\nrouter · memgraphrag\nsandbox-templates · host-infra\nmonitoring"]:::ci
         REG[("Registry :5050")]:::registry
         GLBKS["bks/bksamotsvety\nнезависимый push · CI/CD Vars"]:::ci
         GL -->|kaniko| REG
@@ -59,6 +59,10 @@ flowchart LR
 
     subgraph MGC["Docker Compose · memgraphrag (K3s декомиссирован 2026-07-06)"]
         MGR["memgraphrag :8010\n+ qdrant · внутр. сеть"]:::memory
+    end
+
+    subgraph MON["Docker Compose · monitoring (bks/monitoring)"]
+        GRAF["Grafana :3000 · Prometheus :9090\nLoki + Promtail"]:::router
     end
 
     WD["bks/host-infra · systemd-таймеры\nwatchdog / 5 мин · backup 03:00"]:::external
@@ -81,6 +85,9 @@ flowchart LR
     AG -->|"episodes · retrieve\nhost.openshell.internal:8010"| MGR
     WD -.->|"health · unhealthy · disk · gpu"| DCR & MGR & AG
     WD -.->|алерты| TG
+    DCR -.->|"metrics · audit-логи"| GRAF
+    WD -.->|"metrics.jsonl → Loki"| GRAF
+    GRAF -.->|"dead-man:\nwatchdog молчит"| TG
 
     style GH     fill:none,stroke:#475569,stroke-width:2px
     style GITLAB  fill:none,stroke:#c2410c,stroke-width:2px
@@ -88,6 +95,7 @@ flowchart LR
     style DC      fill:none,stroke:#1d4ed8,stroke-width:2px
     style GB10    fill:none,stroke:#6d28d9,stroke-width:2px
     style MGC     fill:none,stroke:#f59e0b,stroke-width:2px
+    style MON     fill:none,stroke:#1d4ed8,stroke-width:2px
     style APIS    fill:none,stroke:#0369a1,stroke-width:2px
 ```
 
@@ -203,6 +211,16 @@ tar → /home/admin/servers
 + drift-check systemd-юнитов"]:::ok
             HI1 --> HI2
         end
+        subgraph PMON["bks/monitoring
+CI: lint·deploy"]
+            MO1["lint
+json + yaml parse"]:::ci
+            MO2["deploy (gb10-shell)
+compose -p monitoring up -d
++ health grafana/prometheus
++ проверка loki-стрима"]:::ok
+            MO1 --> MO2
+        end
     end  
 
     R5 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
@@ -211,7 +229,7 @@ tar → /home/admin/servers
     subgraph RUN["Runners"]
         RC["bks-docker-runner\ndocker · CPU"]:::runner
         RG["bks-gpu-runner\ndocker + nvidia CDI\ntags: gpu"]:::runner
-        RS["gb10-shell\nshell executor · project-runner\n(новые проекты привязывать вручную)\ndeploy router/memgraphrag/\nbksamotsvety/host-infra\ncompose-def контейнера: bks/host-infra"]:::runner
+        RS["gb10-shell\nshell executor · project-runner\n(новые проекты привязывать вручную)\ndeploy router/memgraphrag/\nbksamotsvety/host-infra/monitoring\ncompose-def контейнера: bks/host-infra"]:::runner
     end
     GL -.->|executes jobs| RUN
 
@@ -227,6 +245,7 @@ tar → /home/admin/servers
     style PM   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PS   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PH   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
+    style PMON fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style RUN  fill:none,stroke:#374151,stroke-width:2px
 ```
 
@@ -338,6 +357,7 @@ flowchart TD
         subgraph DOCKER["docker · compose-стеки"]
             RTR["router\nclassifier :4000 + litellm :4001\nvllm-classifier (LoRA · GPU)"]:::deploy
             MGR["memgraphrag :8010\nqdrant (внутр. сеть)\nTRANSFORMERS_OFFLINE=1"]:::memory
+            MONS["monitoring (bks/monitoring)\ngrafana :3000 · prometheus :9090\nloki + promtail\nсеть router_default external"]:::deploy
             GLB["gitlab :8929 · registry :5050\nrunners: docker · gpu ·\ngitlab-runner-shell (gb10-shell,\ncompose-def в bks/host-infra,\ngroup_add: DOCKER_GID)"]:::deploy
             SBX["OpenShell sandbox\nbks-production\nsupervisord: gw-director-bot\ngw-mkt-bot · gw-experiment"]:::agent
         end
@@ -345,8 +365,10 @@ flowchart TD
         DATA[("bind mounts:\n/home/admin/servers/*\nбэкапы: /home/admin/backups/bks/")]:::data
     end
 
-    WD -.->|"health / unhealthy /\nready-проверки"| RTR & MGR & SBX
+    WD -.->|"health / unhealthy /\nready-проверки"| RTR & MGR & MONS & SBX
     WD -.->|"OK→FAIL · FAIL→OK\nсводка 09:00"| TGA
+    WD -.->|"metrics.jsonl\n(bind → promtail)"| MONS
+    MONS -.->|"dead-man алерт:\nwatchdog молчит > 20 мин"| TGA
     BK -->|"VACUUM INTO · tar"| DATA
     WD -.->|"свежесть бэкапа"| DATA
     RTR & MGR --> DATA
