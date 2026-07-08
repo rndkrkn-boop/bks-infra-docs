@@ -10,7 +10,7 @@
 |---|---|---|
 | OpenShell / sandbox `bks-production` | docker на хосте | docker restart policy + watchdog |
 | gateway director-bot / mkt-bot / experiment | внутри sandbox | supervisord внутри sandbox |
-| `hermes kanban daemon` | внутри sandbox | supervisord внутри sandbox |
+| kanban-диспетчер (встроен в gateway, 03 §3.1) | внутри sandbox | supervision gateway = supervision диспетчера |
 | cron-джобы Hermes (sweeps, monitor, digest) | внутри sandbox (hermes cron) | сам Hermes; контроль «джобы существуют» — watchdog |
 | router (classifier, litellm, vllm-classifier, whisper, ocr) | docker-compose хоста | `restart: unless-stopped` + healthchecks compose + watchdog |
 | memgraphrag + qdrant | docker-compose хоста (Phase 0: миграция из K3s, кластер декомиссируется) | `restart: unless-stopped` + healthcheck compose + watchdog |
@@ -144,5 +144,6 @@ sandbox'ов. До тех пор честно живём с single-host риск
 - [ ] kill -9 любого процесса из §1 → восстановление ≤ 2 мин без человека
 - [ ] `docker stop` memgraphrag-пода → алерт в Telegram ≤ 15 мин (NFR-1)
 - [ ] недельный прогон: ежедневные сводки приходят, ложных алертов < 3/нед
-- [ ] restore-тест пройден и записан в runbook
+- [x] restore-тест пройден и записан в runbook
+      (2026-07-09, [execution-logs/phase0-restore-test.md](execution-logs/phase0-restore-test.md))
 - [ ] runbook восстановления хоста в DEPLOY.md
