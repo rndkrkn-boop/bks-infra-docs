@@ -310,7 +310,7 @@ flowchart LR
     WEB(["Internet\nnous-web"]):::ext
     STT["STT :10301\nfaster-whisper\nlarge-v3"]:::ext
 
-    ST & RS & EXP & MM & AN & CN -->|code_execution| MGR
+    ST & RS & EXP & MM & AN & CN -->|"MCP\nmcp_memgraphrag_*"| MGR
     RS & MM -->|web_search| WEB
     DB & MKT -.->|голос| STT
 

@@ -52,7 +52,7 @@ MemGraphRAG отвечает /health ≥ 48ч уже в docker-compose; `kubectl
 | 2.1 | Дисциплина эпизодов: детерминированные id, качество (04 §4.3–4.4), наполнение prod/mkt графа реальными карточками |
 | 2.2 | Trajectory Memory MVP: эндпоинты + skills trajectory-publish/recall (04 §5) |
 | 2.3 | Spool-деградация L3/L4 (04 §6) + негативный тест |
-| 2.4 | Per-profile API-ключи MemGraphRAG с ACL namespace |
+| 2.4 | Per-profile API-ключи MemGraphRAG с ACL namespace (частично: 2026-07-09 сделан soft-ACL на уровне MCP-сервера, см. 04 §4.1/§4.2 — общий ключ на сервере, разграничение только в mcp_servers.env; серверная граница в api.py всё ещё открыта) |
 | 2.5 | memory-hygiene cron (04 §3) |
 | 2.6 | A/B-замер пользы recall (метрика duration/turns по типам задач) |
 
