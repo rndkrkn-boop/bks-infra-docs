@@ -1,5 +1,10 @@
 # Roadmap внедрения
 
+> **Перебазировано на аудит 2026-07-21:** решение — **Gate 0 NOT MET /
+> NO-GO**. Выполненные ранее шаги ниже — исторические implementation
+> milestones, а не доказательство приёмки. Канонические blockers и exit
+> criteria: [полный аудит](../audit/full-project-audit-2026-07-21.md).
+
 Принцип последовательности: **сначала реанимация и наблюдаемость (Phase 0),
 потом конвейер (1), потом память (2), потом новые домены (3), потом
 самообучение и масштаб (4)**. Каждая фаза заканчивается проверяемыми
@@ -10,23 +15,35 @@
 ## Phase 0 — Реанимация и наблюдаемость (~1 неделя)
 
 Цель: всё, что уже спроектировано, реально работает, и любой отказ виден.
+Compose/OpenShell, host-watchdog и monitoring stack уже развёрнуты; текущая
+работа Phase 0 — закрыть доказательные и эксплуатационные gaps:
+
+1. получить полный backup set из 8 артефактов и восстановить именно его;
+2. восстановить 3-й gateway и доказать sandbox autorecovery ≤ 2 мин;
+3. провести реальный Telegram E2E и controlled fault tests;
+4. проверить GitLab provenance и доставку monitoring alerts.
 
 | # | Задача | Детали |
 |---|---|---|
-| 0.1 | Перенести MemGraphRAG + Qdrant из K3s в docker-compose на хосте | K3s избыточен: однонодовый кластер без репликации не даёт ничего, кроме слоя, прячущего отказы (роутер уже мигрировал так же 2026-07-02). Compose-файл — в репо `bks/memgraphrag` (`docker-compose.yml`: сервисы memgraphrag + qdrant, `restart: unless-stopped`, healthcheck на `/health`); данные — bind mounts на хосте (перенести содержимое PVC: episodes SQLite + igraph, Qdrant storage); порт memgraphrag на хост (например `:8010`); деплой-шаг CI меняется с `kubectl rollout restart` на `docker compose pull && up -d` (как у роутера) |
-| 0.2 | Починить загрузку Contriever | диагностика по гипотезам аудита §3 (docker run образа с `TRANSFORMERS_OFFLINE=1` покажет, есть ли веса в образе); пересборка; CI-gate offline-smoke |
-| 0.3 | Перевести потребителей на новый URL | `MEMGRAPHRAG_API_URL=http://host.openshell.internal:8010` в GitLab Variables / deploy/.env; обновить allowlist в политике sandbox (пресет internal-api: новый порт); sync-profiles + проверка из sandbox |
-| 0.4 | Декомиссия K3s | после 0.1 кластер пуст (bks-router опустел 2026-07-03): удалить namespaces memgraphrag/bks-router и nvidia-device-plugin daemonset, остановить и отключить k3s.service; манифесты в `MemGraphRAG/deploy/` пометить deprecated (оставить как документацию); обновить ARCHITECTURE.md §2.5 |
-| 0.5 | Watchdog v1 | скрипт + systemd timer + Telegram-канал алертов (05 §3); проверки без kubectl — только docker/compose healthchecks |
-| 0.6 | Supervisord в sandbox | шлюзы + kanban daemon под autorestart (05 §2); переделать start-gateways.sh |
-| 0.7 | Запустить `hermes kanban daemon` + boards init | 03 §1, §3 |
-| 0.8 | e2e-тест конвейера отчётов | реальный отчёт в Telegram → карточка → воркер → результат; здесь вскроется, почему карточки не создавались (0 задач в базе — возможно дефект и на входной стороне) |
+| 0.1 | ✅ MemGraphRAG + Qdrant перенесены в Compose | Рабочий контур `memgraphrag` использует host `:8010`, bind mounts и `restart: unless-stopped`; K3s-манифесты только historical/deprecated |
+| 0.2 | ✅ Offline Contriever gate реализован | CI содержит `offline-smoke` с `TRANSFORMERS_OFFLINE=1` и `--network none`; успешность последнего production pipeline ещё требует GitLab evidence |
+| 0.3 | ✅ Потребители переведены на host endpoint | Канонический URL из sandbox — `http://host.openshell.internal:8010`; доступ идёт через MCP и точечную OpenShell policy |
+| 0.4 | ⚠ K3s выведен из рабочего контура | Workloads/namespaces удалены, API `:6443` не слушает; unit всё ещё установлен, точное `systemctl`-состояние на аудите не подтверждено |
+| 0.5 | Watchdog v1 | развёрнут: systemd timer; kanban-проверка только liveness, stale/blocked принадлежат cron. Доставку Telegram-алертов ещё доказать |
+| 0.6 | Supervisord в sandbox | gateway под autorestart; текущий факт 2 RUNNING при контракте 3, autorecovery после sandbox restart не доказан |
+| 0.7 | Включить integrated gateway dispatch + boards init | отдельный `hermes kanban daemon` не является current architecture; проверить dispatch после чистого рестарта |
+| 0.8 | E2E конвейера отчётов | Synthetic card → worker исторически проверен; обязательный текущий тест — реальный Telegram report → intake → карточка → worker → result → notify + idempotent replay |
 | 0.9 | Шлюз experiment | третий Telegram-профиль в supervisord |
-| 0.10 | Бэкапы v1 + restore-тест | 05 §5 (после 0.1 бэкапы проще: обычные каталоги хоста вместо PVC) |
+| 0.10 | Бэкапы v1 + restore-тест | исторический restore 2026-07-09 прошёл; текущий backup 2026-07-21 FAIL (нет profiles + 5 kanban DB), нужен новый полный set из 8 артефактов |
 
 **Gate 0**: DoD оркестрации п.1–2 (03 §7), DoD надёжности п.1–2 (05 §8),
 MemGraphRAG отвечает /health ≥ 48ч уже в docker-compose; `kubectl` на хосте
 больше не нужен ни одному контуру.
+
+**Статус на 2026-07-21: NOT MET.** Частичный synthetic kanban-тест не
+заменяет Telegram E2E; sandbox autorecovery отсутствует, gateway 2/3,
+current backup неполон. Переход к Gate 1 — **NO-GO** до выполнения exit
+criteria полного аудита.
 
 ## Phase 1 — Рабочий конвейер (~1–2 недели)
 
@@ -47,6 +64,9 @@ MemGraphRAG отвечает /health ≥ 48ч уже в docker-compose; `kubectl
 
 ## Phase 2 — Память в полную силу (~2 недели)
 
+**Будущий gap, не дополнительный blocker текущего Gate 0:** production
+memory path уже MCP; здесь остаются trajectories, spool и server-side ACL.
+
 | # | Задача |
 |---|---|
 | 2.1 | Дисциплина эпизодов: детерминированные id, качество (04 §4.3–4.4), наполнение prod/mkt графа реальными карточками |
@@ -59,6 +79,9 @@ MemGraphRAG отвечает /health ≥ 48ч уже в docker-compose; `kubectl
 **Gate 2**: DoD памяти (04 §7) полностью.
 
 ## Phase 3 — Домены: оборудование и оргструктура (~3–4 недели, параллелимо)
+
+**Будущий gap, не дополнительный blocker текущего Gate 0:** OT/PII sandbox,
+профили и namespaces ещё не являются текущим production-контуром.
 
 | # | Задача |
 |---|---|
@@ -81,7 +104,7 @@ MemGraphRAG отвечает /health ≥ 48ч уже в docker-compose; `kubectl
 | 4.3 | Eval-gates на skills/SOUL-изменения (golden-карточки по типам задач, по образцу router eval) |
 | 4.4 | Бюджеты LiteLLM per-profile; fallback-цепочки cheap/mid |
 | 4.5 | Пересмотр kanban-топологии (нужен ли сетевой kanban / общий борд между sandbox) |
-| 4.6 | Prometheus/Grafana, если jsonl-метрик стало мало |
+| 4.6 | Усиление уже развёрнутых Prometheus/Grafana/Loki/Promtail: verified targets, alert rules, retention и резервный канал |
 | 4.7 | (Опция) второй хост: offsite-бэкапы → реплики сервисов |
 
 ## Открытые вопросы к заказчику (не блокируют Phase 0–1)

@@ -1,5 +1,9 @@
 # Целевая архитектура агентной платформы BKS v2
 
+> **Текущая база: 2026-07-21.** Фактическое состояние и решение **NO-GO**
+> см. в [полном аудите](../audit/full-project-audit-2026-07-21.md).
+> Ниже различаются уже развёрнутый контур и будущие Phase 2–3 возможности.
+
 ## 1. Общий вид
 
 Система = **4 плоскости**, каждая с собственным контрактом:
@@ -25,14 +29,15 @@
 ┌─ Плоскость инференса и инфраструктуры ───────────────────────────────┐
 │  LLM-роутер :4000 (classifier→LiteLLM, tiers, security/pii LoRA,     │
 │  whisper, OCR) · memgraphrag+qdrant :8010 (docker-compose) · GitLab  │
-│  Supervision + watchdog + алерты + бэкапы (см. 05)                   │
+│  Supervision · watchdog · Prometheus/Grafana/Loki/Promtail · бэкапы  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Ключевой сдвиг относительно текущего состояния — **не новые компоненты,
-а включение и обвязка существующих**: диспетчер kanban, supervision,
-watchdog, плюс два новых элемента — Trajectory Memory (L4) и доменные
-контуры (equipment/org) в отдельных sandbox'ах.
+Текущий production-контур уже использует Compose + OpenShell, встроенный
+gateway dispatch, MCP-доступ к MemGraphRAG, supervision и развёрнутый
+monitoring. Контракт требует три Telegram gateway, но аудит увидел только
+два RUNNING. Trajectory Memory (L4), server-side memory ACL и доменные
+контуры equipment/org остаются будущими gaps Phase 2–3.
 
 ## 2. Топология sandbox'ов
 
@@ -41,7 +46,7 @@ watchdog, плюс два новых элемента — Trajectory Memory (L4)
 
 | Sandbox | Профили | Особые политики | Фаза |
 |---|---|---|---|
-| `bks-production` (есть) | director-bot, mkt-bot, experiment, report-processor, structuring, research, analytics, market-monitor, content | telegram, nous-web, internal-api (router, memgraphrag) | сейчас |
+| `bks-production` (есть) | 9 профилей: director-bot, mkt-bot, experiment, report-processor, structuring, research, analytics, market-monitor, content | telegram, nous-web, internal-api (router, memgraphrag); gateway-контракт 3, на 2026-07-21 RUNNING 2 | сейчас |
 | `bks-equipment` (новый) | equipment-research, equipment-integrator | + explicit allowlist OT-хостов `IP:port` (Modbus/OPC UA/HTTP вендорского ПО), read-only git | Phase 3 |
 | `bks-org` (новый) | org-analytics | + доступ к org-pii namespace графа; БЕЗ web; выход только в роутер | Phase 3 |
 | `claude-code` (шаблон есть) | инженерные задачи по самой платформе | claude-code-strict + git push | по мере надобности |
@@ -90,7 +95,7 @@ sandbox'ами общей доски нет. Мосты между контур�
 2. director-bot (/report-intake): vision_analyze → уточнение → kanban_create(
      board=production, assignee=report-processor, status=triage,
      body: файл, тип, что извлечь)                      ← вход зафиксирован
-3. kanban-диспетчер в gateway (tick ≤60с): claim → спавнит воркера report-processor
+3. встроенный gateway dispatch (tick ≤60с): claim → спавнит воркера report-processor
      с workspace dir:.../reports, skill kanban-worker, KANBAN_GUIDANCE
 4. Воркер: retrieval L4 (похожие обработки) + шаблоны L2 → обработка
      → heartbeat в процессе → kanban_complete(summary, metadata={результаты})
@@ -99,18 +104,18 @@ sandbox'ами общей доски нет. Мосты между контур�
 6. director-bot нотификация в Telegram: «отчёт обработан: <сводка>»
      (kanban notify-subscribe)
 Сбои: воркер упал → failure-limit=2 повтора → block + алерт в Telegram;
-      нет heartbeat → reclaim; sandbox перезапущен → daemon поднят
-      supervisor'ом, незавершённые задачи переclaim'иваются.
+      нет heartbeat → reclaim; sandbox перезапущен → gateway поднят
+      supervisor'ом, встроенный dispatch переclaim'ивает задачи.
 ```
 
 ## 5. Потоки данных между компонентами
 
 - **Агент → LLM**: всегда роутер `:4000` (auto/явный tier). Fallback
   cloud уже в LiteLLM. Vision/OCR/STT — тоже через роутер.
-- **Агент → граф**: HTTP к MemGraphRAG API (`code_execution`), с
-  обязательной мягкой деградацией (04 §6). Рассмотреть оформление в
-  skill `memgraph` (общий для всех профилей), чтобы код запросов не
-  дублировался в каждом SOUL/SKILL.
+- **Агент → граф**: MCP-клиент Hermes → реализованный
+  `bksamotsvety/mcp/memgraphrag_mcp.py` → MemGraphRAG API, с обязательной
+  мягкой деградацией (04 §6). Прямой `code_execution` не является
+  каноническим production-путём.
 - **Агент → траектории**: та же точка (MemGraphRAG API, новые эндпоинты
   /api/trajectories) — см. 04 §5.
 - **Оркестрация → человек**: Telegram. Три класса сообщений:
@@ -127,7 +132,7 @@ sandbox'ами общей доски нет. Мосты между контур�
 | Оркестрация на Hermes kanban | самописная очередь / Temporal / Celery | ядро уже в рантайме агента: claim, heartbeat, спавн воркеров с инъекцией guidance; внешний оркестратор не умеет спавнить Hermes-профили без обвязки |
 | Trajectory Memory поверх MemGraphRAG+Qdrant | отдельный новый сервис | инфраструктура эмбеддингов/хранения уже есть; MATM — паттерн, а не продукт (arXiv:2606.19911) |
 | Supervision: systemd на хосте + supervisord в sandbox | K8s для всего | sandbox — это OpenShell/NemoClaw-объект, его процессы не видны K3s; systemd-юниты хоста рулят «нянькой», которая чинит внутренности sandbox через `nemohermes exec` |
-| Watchdog как cron на хосте | Prometheus+Alertmanager сразу | сначала минимальный контур (скрипт+Telegram), Prometheus — Phase 4; важно закрыть дыру за день, а не за месяц |
+| Watchdog как systemd timer на хосте плюс monitoring stack | только контейнерный watchdog | host-watchdog остаётся вне наблюдаемой зоны отказа; Prometheus, Grafana, Loki и Promtail уже развёрнуты, но targets/alerts и доставка требуют текущей проверки |
 | Отдельные sandbox для OT и PII | политики в общем sandbox | blast radius: компрометация web-серфящего research-агента не должна давать путь в промышленную сеть или к HR-данным |
 | Продолжаем NVIDIA NIM tiers + Anthropic fallback | единая большая модель | стоимость: 80% задач конвейера — mid; large только research/analytics/content |
 

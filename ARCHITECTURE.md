@@ -1,12 +1,19 @@
 # Полная схема взаимодействия nemohermes_bks
 
+> [!CAUTION]
+> **Статус на 2026-07-21: NO-GO** для безусловной приёмки production до
+> Gate 1. Источник актуального статуса:
+> [`docs/audit/full-project-audit-2026-07-21.md`](./docs/audit/full-project-audit-2026-07-21.md).
+> Схемы ниже описывают проектный контракт. Блоки «Наблюдалось 2026-07-21»
+> отделяют подтверждённый runtime от целевого устройства системы.
+
 ## Состав репозитория
 
 | Папка | Роль |
 |---|---|
 | `NemoClaw/` | Апстрим-инструмент NVIDIA: CLI + blueprint для запуска агентов (Hermes/OpenClaw) в изолированных OpenShell-песочницах. Управляет жизненным циклом sandbox (onboard/policy/exec). |
 | `sandbox-templates/` | Наш слой enterprise-политик НАД NemoClaw: пресеты `internal-api`, `github-hermes`, `claude-code-strict` и т.д. — шаблон для *любого* клиента/команды. |
-| `bksamotsvety/` | Конкретное прод-развёртывание для клиента «БайкалКварцСамоцветы»: один sandbox `bks-production` с 8 агентскими профилями. |
+| `bksamotsvety/` | Конкретное прод-развёртывание для клиента «БайкалКварцСамоцветы»: один sandbox `bks-production` с 9 агентскими профилями. |
 | `router/` | Свой LLM-роутер (classifier + LiteLLM) — единая точка инференса для всех профилей bksamotsvety. |
 | `MemGraphRAG/` | Сервис графовой памяти (episodes + retrieval), используется профилями `structuring`/`research`/`experiment`/`market-monitor`/`analytics`/`content`. |
 | `host-infra/` | Хостовый supervision-слой: watchdog (9 проверок / 5 мин / Telegram-алерты), ежедневные бэкапы, compose-определение CI-раннера `gitlab-runner-shell`. Работает systemd-таймерами НА хосте — сознательно слоем ниже docker (см. §2.6). |
@@ -31,12 +38,12 @@ GitHub (`rndkrkn-boop/bksamotsvety`) как личный бэкап — это �
 │    LITELLM_MASTER_KEY, LITE_LLM_ENDPOINT, MEMGRAPHRAG_API_KEY, QDRANT_API_KEY │
 │                                                                               │
 │  Репозитории (+ project-level Variables для того, что специфично одному):    │
-│    bks/router          → CI: lint → eval-config → unit-test(25) → build     │
+│    bks/router          → CI: lint → eval-config → unit-test(64) → build     │
 │                           → deploy (gb10-shell): docker compose + sync-триггер│
 │                           project vars: NVIDIA_API_KEY*, OPENAI/ANTHROPIC_KEY,│
 │                             HF_TOKEN, GRAFANA_*, BKS_SYNC_TRIGGER_TOKEN       │
 │    bks/sandbox-templates → CI: validate-presets                              │
-│    bks/memgraphrag     → CI: lint → unit-test(12) → build                   │
+│    bks/memgraphrag     → CI: lint → unit-test(56) → build → offline-smoke  │
 │                           → deploy (gb10-shell): docker compose + sync-триггер│
 │                           project var: MEMGRAPH_MODEL (tier роутера),        │
 │                             BKS_SYNC_TRIGGER_TOKEN                           │
@@ -102,9 +109,10 @@ router: deploy job                    memgraphrag: deploy job
                              │
                              ▼
         sync: cp deploy/.env.example deploy/.env
-              + допись значений из group/project Variables
-                (LITELLM_MASTER_KEY, MEMGRAPHRAG_API_KEY, QDRANT_API_KEY,
-                 BKS_TELEGRAM_*, NEMOCLAW_SANDBOX_NAME)
+              + source: ${VAR:-default} берёт значения из уже экспортированных
+                group/project Variables (LITELLM_MASTER_KEY,
+                MEMGRAPHRAG_API_KEY, QDRANT_API_KEY, BKS_TELEGRAM_*,
+                NEMOCLAW_SANDBOX_NAME)
               + bash deploy/sync-profiles.sh   (идемпотентна)
                              │
                              ▼
@@ -117,34 +125,25 @@ router: deploy job                    memgraphrag: deploy job
 `openshell provider create`) в CI не участвует — это ручной one-time шаг,
 не часть регулярного деплоя.
 
-### Pre-push eval gate (router)
+### Quality gate роутера: ручной GitLab CI
 
 ```
-git push origin main
+изменение router
         │
         ▼
-.githooks/pre-push
+GitLab CI: ручной quality-gate job
         │
-        ├── изменились classifier.py / litellm_config.yaml /
-        │   docker-compose.yml / Dockerfile / supervisord.conf?
-        │        нет → пропустить
-        │        да  ↓
-        │
-        ├── все коммиты помечены "style:"?
-        │        да  → пропустить (форматирование, логика не менялась)
-        │        нет ↓
-        │
-        └── eval/sandbox/run.sh python3 gate.py
-                  │
-                  ├── claude-cli недоступен (протухшая сессия)
-                  │        → [INFRA-WARN], exit 0 (push НЕ блокируется)
-                  │
-                  ├── avg correctness упал ≥ 1.5 по тиру ИЛИ curated-кейс pass→fail
-                  │        → GATE: FAIL, exit 1 (push заблокирован)
-                  │
-                  └── в пределах порога
-                           → GATE: OK, exit 0
+        └── eval/sandbox/run.sh → gate.py
+                  ├── регрессия качества → GATE: FAIL, exit 1
+                  ├── норма              → GATE: OK, exit 0
+                  └── сбой инфраструктуры/claude-cli
+                                             → GATE: SKIP, exit 0
 ```
+
+Это **не автоматический fail-closed барьер**: job запускается вручную, а
+`GATE: SKIP` не блокирует pipeline. Поэтому production-изменение может пройти
+без оценки качества; аудит классифицирует это как High risk. Ранее описанный
+локальный `.githooks/pre-push` удалён и частью текущего контроля не является.
 
 ---
 
@@ -163,7 +162,6 @@ GitLab CI/CD Variables  ──export──▶  deploy/.env  ──source──�
                                ├─ 2. openshell policy update            ──▶  white-list egress:
                                │        • api.telegram.org:443
                                │        • host.openshell.internal:4000  (LLM Router, Docker Compose)
-                               │        • host.openshell.internal:10301 (STT)
                               │        • host.openshell.internal:11434/8000 (local-inference, опц.)
                               │        • api.openai.com / api.anthropic.com (опц.)
                               │
@@ -177,9 +175,11 @@ GitLab CI/CD Variables  ──export──▶  deploy/.env  ──source──�
                               │                                              openshell:resolve:env:, провайдер здесь не нужен
                               │
                               └─ 5. start-gateways.sh                   ──▶  внутри sandbox:
-                                       nemohermes sandbox exec bks-production --
-                                         hermes gateway run --profile <name>
-                                       (по одному процессу на профиль с Telegram)
+                                       supervisord → gw-director-bot
+                                                    gw-mkt-bot
+                                                    gw-experiment
+                                       каждый запускает hermes gateway run --profile <name>;
+                                       kanban dispatch встроен в gateway
 ```
 
 Песочница = OpenShell sandbox, управляется только NemoClaw (`nemohermes sandbox …`); K3s не участвует (декомиссирован, см. §2.5).
@@ -193,7 +193,7 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
 
 ---
 
-## 2. Рантайм: 8 профилей-агентов в одном sandbox
+## 2. Рантайм: 9 профилей-агентов в одном sandbox
 
 ```
                          ┌────────────────────── sandbox "bks-production" (OpenShell, изолирован SSRF-guard) ──────────────────────┐
@@ -213,9 +213,10 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
                          │   │               │  │               │      читают также: analytics, content — см. ниже)               │
                          │   │ model: mid    │  │ model: large  │  ── web_search/extract (nous-web) ──▶ интернет                    │
                          │   └───────┬───────┘  └───────┬───────┘                                                                  │
-                         │           │                   │            ┌───────────────┐                                            │
-                         │           │                   │            │   content     │  model: large                              │
-                         │           │                   │            └───────┬───────┘                                            │
+                         │           │                   │            ┌───────────────┐  ┌──────────────────┐                      │
+                         │           │                   │            │   content     │  │ report-processor │                      │
+                         │           │                   │            │ model: large  │  │ kanban worker    │                      │
+                         │           │                   │            └───────┬───────┘  └────────┬─────────┘                      │
                          │           └───────────────────┴────────────────────┘                                                     │
                          │                                │                                                                          │
                            │                     все profile/model.base_url = ${BKS_ROUTER_URL}                                       │
@@ -247,6 +248,18 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
                                           integrate.api.nvidia.com  /  api.anthropic.com
 ```
 
+Девять профилей: `analytics`, `content`, `director-bot`, `experiment`,
+`market-monitor`, `mkt-bot`, `report-processor`, `research`, `structuring`.
+Не каждый профиль является постоянно работающим gateway: проектный контракт
+supervision — **три** Telegram gateway (`director-bot`, `mkt-bot`,
+`experiment`), остальные профили вызываются как исполнители.
+
+> **Наблюдалось 2026-07-21:** watchdog считал supervision-проверку успешной,
+> но runtime сообщил только **2** supervised-программы. Это FAIL относительно
+> контракта из 3 gateway; какой именно процесс отсутствовал, аудит не установил.
+> Реальный Telegram → kanban → worker → result → notification E2E также не
+> подтверждён.
+
 ### Дополнительные внешние связи профилей
 
 - **MemGraphRAG** (см. раздел 2.5), все связи — через MCP-сервер
@@ -261,11 +274,18 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
     завершения (`store_episode`, source привязан к task_id).
   - **market-monitor** пишет ценовые находки в namespace `mkt`.
   - **analytics** читает `retrieve` по обоим namespace (`prod` и `mkt`).
-  - **content** читает `retrieve` по namespace `prod`.
-- **director-bot / mkt-bot** (опц.): STT на `host.openshell.internal:10301`
-  (speaches/faster-whisper-server, модель `Systran/faster-whisper-large-v3`).
-  Требует явной секции `stt:` в `config.yaml` профиля (`provider: openai`,
-  `openai.base_url: "${STT_API_URL}/v1"`) — без неё автоопределение даёт «none».
+  - **content** читает `retrieve` по namespace `prod` и `mkt`.
+- **Kanban**: диспетчер встроен в gateway Hermes v2026.5.16 и включается
+  `kanban.dispatch_in_gateway: true`. Отдельный `hermes kanban daemon`,
+  отдельный pidfile и отдельный процесс supervision рабочему контракту не
+  нужны; живучесть dispatch совпадает с живучестью gateway. Stale/blocked
+  карточки обрабатывают cron sweeps, а не watchdog.
+- **director-bot / mkt-bot**: STT идёт через общий router `:4000`:
+  deployment `whisper` в LiteLLM → `vllm-whisper`. Требуется явная секция
+  `stt:` в `config.yaml` профиля (`provider: openai`,
+  `openai.base_url: "${STT_API_URL}/v1"`). Старый прямой контур
+  `host.openshell.internal:10301` декомиссирован 2026-07-04 и не является
+  fallback.
 - Любой профиль можно индивидуально переключить на локальный Ollama/vLLM
   (`host.openshell.internal:11434|8088`) или прямой облачный провайдер.
 
@@ -286,9 +306,14 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
 > MemGraphRAG + Qdrant перенесены в docker-compose (см. §2.4 ниже).
 > Namespace `memgraphrag` удалён (`kubectl delete namespace memgraphrag`).
 > DaemonSet `nvidia-device-plugin-daemonset` (kube-system) удалён.
-> k3s.service остановить вручную: `sudo systemctl stop k3s && sudo systemctl disable k3s`.
 > K8s-манифесты в `MemGraphRAG/deploy/*-k3s.yaml` сохранены как документация, помечены deprecated.
 > `kubectl` на хосте больше не нужен ни одному рабочему контуру.
+
+**Текущий операционный контракт:** активных K3s-деплоев и процедур нет;
+production использует Docker Compose + OpenShell. Аудит 2026-07-21 не обнаружил
+listener `6443` и symlink enablement, хотя unit K3s всё ещё установлен;
+`systemctl`-состояние независимо проверить не удалось. Исторические команды
+K3s не являются инструкциями для текущей эксплуатации.
 
 ## 2.4 MemGraphRAG + Qdrant (docker-compose на хосте, с 2026-07-06)
 
@@ -349,8 +374,19 @@ watchdog.env, state/, metrics.jsonl, backup.log, /home/admin/backups/bks/
   supervisord-программы, kanban liveness, свежесть бэкапа (<26ч), диск (<85%),
   GPU. Алерты в Telegram при OK→FAIL/FAIL→OK + ежедневная сводка 09:00.
   Пороги стейл/blocked-карточек — НЕ здесь (cron-sweeps внутри sandbox).
-- **backup** (`bks-backup.timer`, ежедневно 03:00): kanban.db ×5 досок
-  (VACUUM INTO), профили Hermes, данные MemGraphRAG и Qdrant; ротация 7 дней.
+- **backup** (`bks-backup.timer`, ежедневно 03:00): контракт полноты —
+  **8 артефактов**: `kanban.db` пяти досок, архив профилей Hermes, архив
+  MemGraphRAG и архив Qdrant; ротация 7 дней. Текущий скрипт архивирует
+  live storage-каталог Qdrant без snapshot API/остановки контейнера, поэтому
+  консистентность этого артефакта не гарантирована и требует отдельного
+  integrity/restore-теста.
+
+> **Наблюдалось 2026-07-21:** последний запуск завершился с одной ошибкой,
+> архив профилей не создан, ни одна из пяти ожидаемых kanban БД не найдена.
+> Лог сообщил о создании архивов MemGraphRAG и Qdrant, но inventory независимо
+> не подтверждён. Текущая копия неполна (**FAIL**), хотя freshness-проверка
+> watchdog показывала OK. Исторический restore 2026-07-09 всех 8 артефактов
+> не доказывает восстанавливаемость текущего набора.
 - **gitlab-runner-shell/**: compose-определение CI-раннера (см. §0) —
   пересоздание только вручную с хоста (runner не может пересоздать сам себя):
   `cd /home/admin/servers/gitlab-runner-shell && docker rm -f gitlab-runner-shell && docker compose up -d`.
@@ -413,8 +449,11 @@ OpenShell tiers: restricted (по умолчанию для прода) ⊂ bala
 Принципы (зафиксированы 2026-06-11, см. `sandbox-templates/README.md`):
 SSRF-guard блокирует приватные сети по умолчанию → каждый внутренний сервис
 открывается явным `allowed_ips`/`endpoint` правилом, не общим послаблением
-tier'а; credential rewrite на egress, чтобы токены не попадали в память
-процесса агента; push в git — только у claude-code-агентов (`github-claude-code`/
+tier'а; credential rewrite на egress применяется к provider-секретам
+(в production — Telegram), чтобы токены не попадали в память процесса агента.
+Это не универсальная гарантия: router/MemGraphRAG ключи сейчас доставляются
+host-side литералами в `.env` профилей (см. §1). Push в git — только у
+claude-code-агентов (`github-claude-code`/
 `gitlab-claude-code`), Hermes — read-only git (upload-pack) + MR/PR через API;
 телеметрия Claude Code (statsig/sentry) вырезана в `claude-code-strict`,
 оставлен только `api.anthropic.com`; phone-home Hermes (`nousresearch.com`)
@@ -427,8 +466,9 @@ tier'а; credential rewrite на egress, чтобы токены не попад
 ```
 router/
  ├── tests/
- │     ├── unit/test_classifier.py   (11 тестов)  — classify(), /v1/chat/completions, моки AsyncMock
- │     └── unit/test_render_config.py (14 тестов) — key discovery, deployments, YAML output
+ │     ├── unit/test_classifier.py       — classify(), /v1/chat/completions, моки AsyncMock
+ │     ├── unit/test_render_config.py    — key discovery, deployments, YAML output
+ │     └── ...                           — полный suite: 64 теста на аудите
  │
  ├── eval/
  │     ├── gate.py          — регрессионный гейт: avg correctness по тиру vs baseline
@@ -451,9 +491,13 @@ CI-пайплайн роутера (`bks/router/.gitlab-ci.yml`):
 
 ```
 push → lint (ruff check + format) → eval-config (render_litellm_config.py)
-     → unit-test (pytest tests/unit/, python:3.11-slim, без GPU)
+     → unit-test (64/64 на аудите, python:3.11-slim, без GPU)
      → build (kaniko → 192.168.2.180:5050/bks/router:latest)
+     ↘ quality-gate (manual; GATE: SKIP при infra failure имеет exit 0)
 ```
+
+MemGraphRAG на том же аудите: **56/56** тестов прошли. Это repository evidence,
+а не доказательство полного live E2E.
 
 ---
 
@@ -461,21 +505,29 @@ push → lint (ruff check + format) → eval-config (render_litellm_config.py)
 
 1. **Telegram → агент**: per-profile gateway (`hermes gateway run --profile X`)
    принимает сообщения, разграничение по chat_id группы.
-2. **Агент → LLM**: всегда через `router:4000/30400` (или напрямую cloud/local,
+2. **Агент → LLM**: всегда через `router:4000` (или напрямую cloud/local,
    если профиль переопределён) → classifier выбирает tier → LiteLLM → NVIDIA/Anthropic.
 3. **Агент → память/граф**: `structuring`/`research`/`experiment`/
    `market-monitor`/`analytics`/`content` читают/пишут в MemGraphRAG через
-   `code_execution` (см. §2, «Дополнительные внешние связи профилей»).
+   MCP-инструменты `mcp_memgraphrag_*` (см. §2, «Дополнительные внешние связи
+   профилей»). `code_execution` не входит в этот контракт.
    Отдельно от графа — встроенная Hermes `memory` toolset (файловая, в
    самом sandbox, `memory_enabled: true`): включена у `research`
    (паттерны между сессиями), `experiment` (история экспериментов) и
    `analytics`; выключена у `structuring`, `market-monitor`, `content`.
 4. **Агент → веб**: `research`/`market-monitor` — `web_search`/`web_extract`
    через пресет `nous-web`.
-5. **CI/CD**: push в GitLab (router/memgraphrag/sandbox-templates) → lint + unit-test
-   + kaniko build → образ в registry → `docker compose pull && up -d` обновляет сервис на хосте
-   (K3s декомиссирован 2026-07-06, `kubectl rollout restart` больше не используется).
-   `bksamotsvety`: push в GitHub → pull mirror → GitLab (только зеркало, CI не запускается).
+5. **CI/CD**: `router` выполняет lint, config-check, unit tests, Kaniko build и
+   Compose deploy; `MemGraphRAG` — lint, unit tests, Kaniko build,
+   offline-smoke и Compose deploy; `sandbox-templates` — только
+   `validate-presets`. K3s декомиссирован 2026-07-06, `kubectl rollout restart`
+   больше не используется.
+   `bksamotsvety`: GitLab и GitHub обновляются двумя независимыми `git push`;
+   автоматического зеркалирования между ними нет.
 6. **Управление**: разворачивание sandbox'ов и сетевые политики — через NemoClaw
    CLI (`nemohermes ...`); docker-compose сервисы — через `docker compose` на хосте;
-   секреты — в GitLab CI/CD Variables (`bks/bksamotsvety`).
+   канонический store секретов — GitLab CI/CD Variables
+   (`bks/bksamotsvety`); Telegram-токены доставляются через OpenShell provider,
+   а ключи роутера/MemGraphRAG фактически записываются host-side литералами
+   в `.env` профилей. Это документированное исключение и риск, а не
+   credential-rewrite гарантия для всех секретов.

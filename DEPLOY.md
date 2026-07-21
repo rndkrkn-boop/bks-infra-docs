@@ -1,433 +1,394 @@
-# BKS NemoHermes — Deployment Playbook
+# BKS NemoHermes — операционный playbook
 
-Операционный справочник по развёртыванию и обслуживанию инфраструктуры.
-Архитектура и схема взаимодействия — в [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+Актуальный справочник эксплуатации контура на хосте `192.168.2.180`.
+Состояние и ограничения зафиксированы на **2026-07-21** по
+[`docs/audit/full-project-audit-2026-07-21.md`](./docs/audit/full-project-audit-2026-07-21.md)
+и [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
----
+## NO-GO
 
-## Состояние на 2026-07-03
+**Безусловная приёмка production до Gate 1: NO-GO.**
 
-> **Аудит 2026-07-03** обнаружил, что предыдущая версия этой таблицы (статус
-> на 2026-07-02) была неверна в двух местах: (1) `router-vllm-classifier` не
-> имел `--enable-lora`, а `SECURITY_MODEL` был не задан в `router/.env` —
-> security-проверка молча пропускалась на каждом запросе, несмотря на пометку
-> "✅ в продакшне" ниже в разделе Phase 5; (2) K3s-под `vllm-classifier` с
-> LoRA был недостижим — в кластере отсутствовал `Service`
-> (`vllm-classifier.bks-router.svc` → NXDOMAIN), хотя манифест его описывал.
-> Оба адаптера теперь перенесены целиком на хост в `router/docker-compose.yml`
-> (см. §2.5 ARCHITECTURE.md) — единственный экземпляр на этом железе не
-> выигрывает от K8s-репликации. Заодно найден и исправлен баг парсинга:
-> `security-lora-v1` эхом повторяет заголовок `LEVEL|CATEGORY|REASON` перед
-> ответом, `classifier.py` брал `"LEVEL"` вместо реального уровня риска
-> (`raw.split("|")` → теперь `_SECURITY_RESULT_RE.search()`).
+До повторной приёмки обязательно:
 
-### Инфраструктура (хост `192.168.2.180`)
+1. получить текущий бэкап из всех 8 обязательных артефактов с `Errors: 0`
+   и восстановить его в изолированном контуре;
+2. восстановить контракт из трёх supervised Telegram gateways и доказать
+   восстановление после рестарта sandbox не более чем за две минуты;
+3. выполнить реальный Telegram E2E с audit ID:
+   intake → kanban → worker → result → notification → idempotent replay;
+4. получить read-only доказательства GitLab pipeline/runner/image provenance;
+5. только после доказанного бэкапа и rollback выполнять fault-тесты.
 
-| Сервис | Контейнер / процесс | Порт(ы) | Статус |
-|---|---|---|---|
-| GitLab CE 19.1.1 | `gitlab` | 8929 (web), 2222 (SSH), 5050 (registry) | ✅ работает (Docker healthcheck ложно "unhealthy" — проверяет порт 80, а nginx слушает 8929) |
-| GitLab Runner (CPU) | `gitlab-runner` | — | ✅ зарегистрирован |
-| GitLab Runner (GPU) | `gitlab-runner-gpu` | — | зарегистрирован (`bks-gpu-runner`), но на 2026-07-03 периодически ловит 502 от GitLab API — перепроверить |
-| vLLM classifier | `router-vllm-classifier` | внутренний | ✅ healthy, `--enable-lora` (security-lora-v1, pii-cleaner-lora-v1), `/home/admin/models/adapters` смонтирован |
-| Router (docker-compose) | `router-proxy` | 4000, 4001 | ✅ production; `SECURITY_MODEL=security-lora-v1` активен |
-| vLLM Qwen3.6-35B | `vllm-Qwen3.6-35B-A3B-NVFP4` | 8088 | ✅ running (дефолтный Hermes-профиль хоста ходит сюда напрямую, не через router) |
-| MemGraphRAG (test) | `memgraphrag-test-qdrant` | 16333 | ✅ running |
-| Whisper STT | `whisper-openai` | 10301 | ✅ running |
-| K3s v1.32.5 | — | — | ✅ установлен, node Ready |
-| namespace `bks-router` (K3s) | — | — | пуст с 2026-07-03: vllm-classifier удалён, перенесён на хост (см. выше) |
+До закрытия этих условий запрещено трактовать зелёный watchdog, свежую
+`.last_backup`, наличие listener или исторический restore-тест как достаточное
+доказательство готовности production.
 
-### GitLab репозитории
+## Текущий статус
 
-| Репо | Источник | CI-пайплайн | Статус |
-|---|---|---|---|
-| bks/router | GitLab (primary) | lint → eval-config → unit-test(25) → build → deploy | ✅ зелёный |
-| bks/sandbox-templates | GitLab (primary) | validate-presets | ✅ зелёный |
-| bks/memgraphrag | GitLab (primary) | lint → unit-test(12) → build → deploy | ✅ зелёный |
-| bks/bksamotsvety | GitLab (primary) + `git push` в GitHub `rndkrkn-boop/bksamotsvety` (личный бэкап, без auto-mirror) | lint (shellcheck) → sync — деплой `router`/`memgraphrag` триггерит `sync` напрямую после своего health-check (`SYNC_ONLY=true`), см. §0 ARCHITECTURE.md | добавлено 2026-07-07; group+project CI/CD Variables, часть group-переменных ещё не заведена в GitLab UI (см. §0 ARCHITECTURE.md) |
+Наблюдения аудита 2026-07-21 13:17–13:21 UTC:
 
----
-
-## Что уже сделано
-
-- **GitLab CE** + Container Registry + Runner (CPU) — настроен, CI зелёный
-- **CI пайплайны** для трёх репо: lint → unit-test → kaniko build → push в registry
-- **Unit tests**: router (25), MemGraphRAG (12) — без GPU, без Qdrant
-- **Eval gate** (`router/.githooks/pre-push`): блокирует push при регрессии качества
-- **Auto DevOps отключён** на всех трёх проектах
-- **K3s v1.32.5** — установлен, node Ready, NVIDIA container toolkit настроен
-- **K3s манифесты** применены: MemGraphRAG + Qdrant работают, router namespace создан
-- **bks/bksamotsvety** добавлен в GitLab как pull-mirror от GitHub (PAT)
-- **Classifier улучшен**: fast-path роутинг (rule-based) + умное извлечение контента
-  (first\_user[:400] + last\_user[:400] вместо last\_msg[:600])
-- **S2L адаптеры обучены и задеплоены**:
-  - `security-lora-v1` (eval\_loss=0.024, acc=98.9%) — в vllm-classifier, `SECURITY_MODEL=security-lora-v1` активен
-  - `pii-cleaner-lora-v1` (eval\_loss=0.034, acc=99.1%) — в vllm-classifier (`/models/adapters/pii-cleaner-lora-v1`)
-- **Prometheus метрики добавлены**: `bks_router_routing_path_total`, `bks_router_security_events_total`
-- **GB10 workaround**: privileged pod + hostPath `/dev/nvidia*` + хирургические монты lib (libcuda, libnvidia-ptxjitcompiler)
-
----
-
-## Остаток: шаги до полного деплоя
-
-### Шаг 1 — Зарегистрировать GPU runner
-
-> Нужен один раз. Позволит CI-джобам с `tags: [gpu]` использовать GPU (LoRA eval, vLLM smoke-тесты).
-
-1. Открыть GitLab: <http://192.168.2.180:8929/admin/runners>
-2. **New instance runner** → добавить тег `gpu`, выключить "Run untagged jobs"
-3. Скопировать токен `glrt-...`
-4. Запустить:
-   ```
-   ! RUNNER_TOKEN=glrt-... bash /home/admin/servers/gitlab/register-gpu-runner.sh
-   ```
-5. Проверить: <http://192.168.2.180:8929/admin/runners> — оба runner'а online
-
----
-
-### Шаг 2 — Обновить сессию claude-cli в eval sandbox
-
-> Нужен для работы pre-push eval gate при изменении classifier.py / litellm_config.
-
-Симптом: gate.py выводит `[INFRA-WARN] claude-cli exit 1: ` и пропускает push (не блокирует).
-
-```bash
-# Проверить текущее состояние sandbox
-! openshell ps
-
-# Обновить сессию (откроется браузер или QR)
-! openshell exec claude-eval claude --dangerously-skip-permissions login
-```
-
-После этого eval gate снова будет блокировать регрессии качества.
-
----
-
-### Шаг 3 — Установить K3s ✅ выполнено
-
-> K3s v1.32.5 установлен и работает.
-
-```
-! sudo bash /home/admin/servers/k3s/install.sh
-```
-
-#### GB10 Grace Blackwell: NVIDIA device plugin
-
-NVIDIA k8s-device-plugin v0.17.0 **не работает** с GB10 из коробки по двум причинам:
-
-1. `Incompatible strategy detected auto` — нужно настроить NVIDIA container toolkit для k3s containerd:
-   ```bash
-   ! sudo mkdir -p /var/lib/rancher/k3s/agent/etc/containerd
-   ! sudo nvidia-ctk runtime configure --runtime=containerd \
-       --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
-   ! sudo systemctl restart k3s
-   ```
-
-2. `error getting device memory: Not Supported` — GB10 unified memory не поддерживает
-   `nvmlDeviceGetMemoryInfo()`. Device plugin не может зарегистрировать GPU через стандартный путь.
-
-**Рабочий обходной путь для GB10** (однонодовый кластер): не используй `nvidia.com/gpu`
-resource request. Вместо этого монтируй `/dev/nvidia*` напрямую в privileged pod.
-Пример — см. `router/deploy/01-vllm-classifier.yaml`: `securityContext.privileged: true` +
-hostPath volumes для каждого устройства.
-
-#### Импорт образа vllm в k3s containerd
-
-vllm образ скачан в Docker (27GB) — в k3s containerd его нет. Импортируй один раз:
-```bash
-! docker save vllm/vllm-openai:nightly -o /tmp/vllm-nightly.tar
-! sudo k3s ctr images import /tmp/vllm-nightly.tar
-! rm /tmp/vllm-nightly.tar
-```
-
----
-
-### Шаг 4 — Настроить kubeconfig для пользователя admin
-
-```bash
-! mkdir -p ~/.kube
-! sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-! sudo chown admin ~/.kube/config
-```
-
-Проверка:
-```
-! kubectl get nodes
-! kubectl get ds -n kube-system nvidia-device-plugin-daemonset
-```
-
-Ожидаемый статус nvidia-device-plugin: `DESIRED=1  CURRENT=1  READY=1`.
-
----
-
-### Шаг 5 — Создать секреты в K3s
-
-Секреты создаются **вне git** (ключи не хранятся в репо).
-
-**MemGraphRAG namespace:**
-```bash
-! kubectl apply -f ~/projects/nemohermes_bks/MemGraphRAG/deploy/qdrant-k3s.yaml
-
-# Сгенерировать и запатчить реальные ключи
-! QDRANT_KEY=$(openssl rand -hex 32)
-! MGR_KEY=$(openssl rand -hex 32)
-
-! kubectl patch secret qdrant-apikey -n memgraphrag \
-    -p "{\"stringData\":{\"api-key\":\"$QDRANT_KEY\"}}"
-
-! kubectl patch secret memgraphrag-apikey -n memgraphrag \
-    -p "{\"stringData\":{\"api-key\":\"$MGR_KEY\"}}"
-
-# Записать ключ MemGraphRAG в deploy/.env для Hermes-профилей
-! echo "BKS_MEMGRAPHRAG_API_KEY=$MGR_KEY" >> ~/projects/nemohermes_bks/bksamotsvety/deploy/.env
-```
-
-**Router namespace — УСТАРЕЛО (2026-07-03):** router-apikeys secret и весь
-`bks-router` namespace были частью первого K3s-эксперимента с router.
-vllm-classifier перенесён на хост (docker-compose), namespace `bks-router`
-теперь пуст. Секция оставлена для истории — не выполнять на новой установке.
-<details><summary>Исторические команды (не актуальны)</summary>
-
-```bash
-! kubectl apply -f ~/projects/nemohermes_bks/router/deploy/00-namespace.yaml
-
-! kubectl create secret generic router-apikeys \
-    --from-literal=NVIDIA_API_KEY_1=nvapi-... \
-    --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
-    -n bks-router
-```
-</details>
-
----
-
-### Шаг 6 — Применить K3s манифесты (только MemGraphRAG)
-
-```bash
-# MemGraphRAG + Qdrant
-! kubectl apply -f ~/projects/nemohermes_bks/MemGraphRAG/deploy/memgraphrag-k3s.yaml
-
-# Следить за поднятием
-! kubectl rollout status deployment/qdrant -n memgraphrag
-! kubectl rollout status deployment/memgraphrag -n memgraphrag
-```
-
-> Router (`vllm-classifier` + LoRA) в K3s больше не разворачивается — см.
-> примечание к "Шаг 7" ниже, весь роутер живёт в `router/docker-compose.yml`
-> на хосте.
-
-Ожидаемое время готовности:
-- Qdrant: ~10 с
-- MemGraphRAG: ~30 с (загрузка Contriever)
-- router: ~20 с
-
----
-
-### Шаг 7 — router через K3s (УСТАРЕЛО, не выполнять)
-
-Эта секция описывала переключение агентов на K3s router через NodePort
-30400. Эксперимент откачен 2026-07-02/03: K8s router Deployment удалён,
-K3s vllm-classifier тоже удалён (не имел `Service` в кластере — был
-недостижим). Router целиком живёт на хосте в docker-compose (порт 4000),
-все профили уже указывают на `BKS_ROUTER_URL=http://host.openshell.internal:4000/v1`
-— дополнительных действий не требуется. Причина отказа от K3s для этого
-сервиса: единственный экземпляр на однонодовом GB10-кластере не выигрывает
-от K8s-репликации, а лишний слой (Service DNS, kubectl apply) добавлял
-только точки отказа.
-
-Проверить маршрутизацию (docker-compose, актуально):
-```bash
-! curl -s http://192.168.2.180:4000/health
-! curl -s -X POST http://192.168.2.180:4000/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{"model":"auto","messages":[{"role":"user","content":"2+2"}]}'
-```
-
----
-
-## Обычные операции
-
-### Обновить образ роутера после push в main
-
-> **Важно:** с 2026-07-02 роутер работает через docker-compose, НЕ через K8s.
-> `router` — локальная сборка (`build: .`), `docker compose pull` его не
-> обновит — нужен `--build` (см. предупреждение в "Обновить docker-compose
-> роутер" ниже).
-```bash
-! cd /home/admin/projects/nemohermes_bks/router && docker compose build router && docker compose up -d
-```
-
-#### K8s router — удалён 2026-07-02 (см. §2.5 ARCHITECTURE.md)
-> `kubectl -n bks-router delete deployment/router` — K8s router больше не используется.
-> Docker-compose роутер на порту 4000 — primary production router.
-
-### Обновить образ MemGraphRAG
-
-```bash
-! kubectl rollout restart deployment/memgraphrag -n memgraphrag
-```
-
-### Посмотреть логи
-
-```bash
-# Docker Compose router (production, port 4000)
-! cd /home/admin/projects/nemohermes_bks/router && docker compose logs -f --tail=50
-
-# vllm-classifier (LoRA, теперь тоже на хосте)
-! docker logs router-vllm-classifier -f --tail=50
-! kubectl logs -n memgraphrag deployment/memgraphrag -f --tail=50
-```
-
-### Обновить docker-compose роутер
-
-> `router` собирается локально (`build: .`), не тянется из registry —
-> `docker compose pull` его НЕ обновит после правки `classifier.py`.
-> Нужен явный `--build` (это то, что забыли сделать 2026-07-02/03: контейнер
-> месяц работал на образе от 2026-06-29 без свежего кода security-LoRA).
-
-```bash
-! cd /home/admin/projects/nemohermes_bks/router && docker compose build router && docker compose up -d
-# vllm-classifier (image из registry, не build) можно просто pull:
-! docker compose pull vllm-classifier && docker compose up -d vllm-classifier
-```
-
-### Перезапустить docker-compose роутер
-
-```bash
-! cd /home/admin/projects/nemohermes_bks/router && docker compose restart
-```
-
-### Запустить eval gate вручную
-
-```bash
-! cd ~/projects/nemohermes_bks/router/eval/sandbox
-! ./run.sh /sandbox/.venv/bin/python3 gate.py
-```
-
-С обновлением baseline (если изменения намеренные):
-```bash
-! ./run.sh /sandbox/.venv/bin/python3 gate.py --update-baseline
-```
-
-### Перезапустить GitLab
-
-```bash
-! cd /home/admin/servers/gitlab && docker compose restart gitlab
-```
-
-### Обновить GitLab CE до новой версии
-
-1. Изменить тег в `/home/admin/servers/gitlab/docker-compose.yml`:
-   `gitlab/gitlab-ce:19.1.1-ce.0` → `gitlab/gitlab-ce:XX.Y.Z-ce.0`
-2. То же для `gitlab-runner-gpu` и `gitlab-runner`
-3. Применить:
-   ```
-   ! cd /home/admin/servers/gitlab && docker compose pull && docker compose up -d
-   ```
-
----
-
-## Endpoints и порты
-
-| Сервис | URL | Заметки |
+| Область | Текущее состояние | Операционная оценка |
 |---|---|---|
-| GitLab web | http://192.168.2.180:8929 | admin панель |
-| GitLab SSH | ssh://192.168.2.180:2222 | `git remote set-url origin ssh://git@192.168.2.180:2222/bks/...` |
-| Container registry | 192.168.2.180:5050 | insecure HTTP, логин: `docker login 192.168.2.180:5050` |
-| Router (docker-compose production) | http://192.168.2.180:4000 | primary router (с 2026-07-02) |
-| LiteLLM proxy (прямой) | http://192.168.2.180:4001 | |
-| vLLM Qwen3.6-35B | http://192.168.2.180:8088/v1 | large-tier локальный |
-| MemGraphRAG (K3s ClusterIP) | http://memgraphrag.memgraphrag.svc:8000 | только внутри K3s |
-| Whisper STT | http://192.168.2.180:10301 | |
+| Router `:4000` | watchdog `OK`, listener есть; 64/64 unit tests | PASS с ограниченными live-доказательствами |
+| LiteLLM `127.0.0.1:4001` | listener есть | HTTP не верифицирован |
+| MemGraphRAG `:8010` | watchdog `OK`, listener есть; 56/56 tests | PASS с ограниченными live-доказательствами |
+| Docker Compose | watchdog не видит restarting/unhealthy | PASS с ограниченными доказательствами |
+| OpenShell sandbox `bks-production` | ready | PASS |
+| Telegram gateways | контракт 3, live-наблюдение 2 supervised programs | **FAIL** |
+| Kanban | liveness `OK`, очереди пусты | E2E/реальное использование не доказаны |
+| Backup | свежесть 18 ч, но последний запуск: 1 ошибка; нет profiles и 5 kanban DB | **FAIL** |
+| Watchdog | 9/9 проверок `OK`, метрики свежие | PASS; backup check проверяет только свежесть |
+| Monitoring | Grafana `:3000`, Prometheus `:9090` слушают | targets/alerts не верифицированы |
+| GitLab/Registry | `:8929`/`:5050` слушают | auth, runners и image digests не верифицированы |
+| K3s | рабочим контуром не используется; API `:6443` не слушает | декомиссирован |
 
----
+## Канонический контур управления
 
-## Пути к ключевым файлам
+| Компонент | Единственный текущий способ управления |
+|---|---|
+| Router + LiteLLM + vLLM classifier/OCR/Whisper | Docker Compose, project `router` |
+| MemGraphRAG + Qdrant | Docker Compose, project `memgraphrag` |
+| Grafana + Prometheus + Loki + Promtail | Docker Compose, project `monitoring` |
+| Sandbox, профили, политики, gateways | NemoClaw/`nemohermes` + OpenShell |
+| Watchdog и backup | host systemd services/timers |
 
-```
-/home/admin/servers/gitlab/
-  docker-compose.yml          — GitLab CE + runners (версии запинены)
-  register-runner.sh          — регистрация CPU runner
-  register-gpu-runner.sh      — регистрация GPU runner (ждёт токена)
+**K3s и `kubectl` не применяются ни к одному текущему рабочему контуру.**
+Исторические сведения вынесены в приложение «НЕ ВЫПОЛНЯТЬ».
 
-/home/admin/servers/k3s/
-  install.sh                  — установка K3s (запустить с sudo)
-  registries.yaml             — insecure mirror для 192.168.2.180:5050
+## Быстрая проверка состояния
 
-/home/admin/projects/nemohermes_bks/bksamotsvety/
-  deploy/.env                 — локальная копия секретов (gitignored); canonical → GitLab CI/CD Vars
-  deploy/setup.sh             — первичный деплой sandbox (source deploy/.env перед запуском)
-  deploy/sync-profiles.sh     — синхронизация профилей в sandbox
-  deploy/start-gateways.sh    — запуск per-profile Telegram-шлюзов
-  profiles/*/config.yaml      — конфиги Hermes-профилей
-  git remote origin           → GitHub rndkrkn-boop/bksamotsvety (source-of-truth)
-  GitLab mirror               → http://192.168.2.180:8929/bks/bksamotsvety (pull, PAT)
+Команды ниже не выводят секреты и не меняют состояние:
 
-/home/admin/projects/nemohermes_bks/router/
-  docker-compose.yml          — текущий прод (docker); vllm-classifier с --enable-lora
-                                 + volume /home/admin/models/adapters:/adapters:ro
-  .env                        — NVIDIA_API_KEY + ANTHROPIC_API_KEY + SECURITY_MODEL
-  classifier.py                — SECURITY_MODEL, security_check(), _SECURITY_RESULT_RE
-                                 (парсит эхо-заголовок LEVEL|CATEGORY|REASON от LoRA)
-  .githooks/pre-push          — eval gate (git config core.hooksPath .githooks)
-  eval/gate.py                — качественный регрессионный гейт
-  deploy/                     — ⚠ ВСЁ УДАЛЕНО из K8s (сохранено как документация GB10-обхода)
-    00-namespace.yaml         — K3s namespace bks-router (пуст с 2026-07-03)
-    01-vllm-classifier.yaml   — ⚠ УДАЛЁН из K8s 2026-07-03, перенесён в docker-compose
-    02-router.yaml            — ⚠ УДАЛЁН из K8s 2026-07-02 (сохранён как документация)
-
-/home/admin/projects/nemohermes_bks/MemGraphRAG/deploy/
-  qdrant-k3s.yaml             — namespace memgraphrag + Qdrant PVC + Deployment
-  memgraphrag-k3s.yaml        — MemGraphRAG Deployment (registry URL уже проставлен)
-```
-
----
-
-## Phase 5 — S2L адаптеры
-
-### Security адаптер — ✅ реально в продакшне с 2026-07-03
-
-`security-lora-v1` (eval\_loss=0.024, token\_acc=98.9%) загружен в
-docker-compose `vllm-classifier` (хост, не K3s — см. §2.5 ARCHITECTURE.md).
-`SECURITY_MODEL=security-lora-v1` задан в `router/.env`, `security_check()`
-реально выполняется на каждом `model=auto` запросе (проверено сквозным
-тестом через `localhost:4000` — PII-запрос корректно получил `3|pii`).
-
-До 2026-07-03 адаптер числился "в продакшне" в этом файле, но фактически не
-выполнялся: `SECURITY_MODEL` был пуст в реальном `.env` (переменная была
-задана только в удалённом K8s Deployment), а K3s-инстанс с загруженным
-адаптером не имел `Service` в кластере и был недостижим. Заодно найден и
-исправлен баг: `security-lora-v1` эхом повторяет заголовок
-`LEVEL|CATEGORY|REASON` перед реальным ответом — `classifier.py` парсил
-`raw.split("|")[0]` и получал буквально `"LEVEL"` вместо цифры уровня риска
-→ всегда `parse_error`. Заменено на `_SECURITY_RESULT_RE.search()`
-(regex-поиск первого `[0-3]|category|reason` в тексте, а не парсинг с начала
-строки).
-
-Риск-события → `log.warning` + метрика `bks_router_security_events_total{level, category}`.
-
-### PII cleaner адаптер ✅ в продакшне (оффлайн-инструмент)
-
-`pii-cleaner-lora-v1` (eval\_loss=0.034, token\_acc=99.1%) загружен в
-docker-compose `vllm-classifier` вместе с security-lora-v1. В горячий путь
-`classifier.py` не встроен (нет вызовов в коде) — используется только как
-оффлайн-инструмент редакции PII через прямой запрос к vLLM.
-Адаптер: `/home/admin/models/adapters/pii-cleaner-lora-v1/`
-
-Использование (офлайн-редакция PII):
 ```bash
-# Модели теперь на хосте, не в K3s:
-docker exec router-proxy curl -s http://vllm-classifier:8000/v1/models
-# видны Qwen/Qwen3.5-0.8B, security-lora-v1, pii-cleaner-lora-v1
+curl -fsS http://127.0.0.1:4000/health
+curl -fsS http://127.0.0.1:8010/health
+curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:9090/-/healthy
+
+docker compose -p router -f /home/admin/ci/router/docker-compose.yml ps
+docker compose -p memgraphrag -f /home/admin/ci/memgraphrag/docker-compose.yml ps
+docker compose -p monitoring -f /home/admin/ci/monitoring/docker-compose.yml ps
+
+nemohermes sandbox status bks-production
+nemohermes sandbox exec bks-production -- bash -c \
+  'export PATH="$PATH:/sandbox/.local/bin"; supervisorctl -c /tmp/supervisord.conf status'
+
+systemctl --no-pager status bks-watchdog.timer bks-backup.timer
+systemctl list-timers --no-pager bks-watchdog.timer bks-backup.timer
+journalctl -u bks-watchdog.service -n 30 --no-pager
 ```
 
-### Classifier LoRA (будущее)
+Ожидание для supervisor: три программы `gw-director-bot`,
+`gw-mkt-bot`, `gw-experiment` в состоянии `RUNNING`. На момент аудита было
+видно только две программы; сначала определить отсутствующую по выводу, не
+подменять это предположением.
 
-После накопления `query_log.jsonl` трафика — переобучить классификатор tier на реальных данных:
+## Docker Compose
+
+Штатный деплой выполняет GitLab CI с masked/protected variables. Ручное
+обновление — аварийная операция оператора; оно допустимо только из CI checkout,
+где уже существует `0600` `.env`. Содержимое `.env` не печатать.
+
+### Router
+
+Проверка и журналы:
+
 ```bash
-cd router/training
-python3 train_adapter.py --adapter-name classifier-lora-v2 \
-    --train train.jsonl --val val.jsonl --epochs 3 --lora-rank 16
+cd /home/admin/ci/router
+docker compose -p router config -q
+docker compose -p router ps
+docker compose -p router logs --tail=100 router
+curl -fsS http://127.0.0.1:4000/health
 ```
 
-Откат: `cd router && docker compose up -d --force-recreate vllm-classifier`
-(вернуть прежний `docker-compose.yml`/адаптер перед пересозданием — K3s
-`kubectl rollout undo` больше не применим, сервис не в K3s).
+Ручное применение образов/конфигурации:
+
+```bash
+cd /home/admin/ci/router
+test -s .env
+docker compose -p router config -q
+docker compose -p router pull
+docker compose -p router up -d --remove-orphans
+curl --fail --silent --show-error --retry 30 --retry-delay 2 \
+  http://127.0.0.1:4000/health
+```
+
+Не использовать `docker compose build` как production-деплой: CI публикует
+router image в registry. Build-only сервисы Compose может пропустить при
+`pull`; это ожидаемо, если их локальные образы уже существуют.
+
+### MemGraphRAG + Qdrant
+
+Qdrant доступен только внутри compose-сети. Не публиковать его порт на хост.
+
+```bash
+cd /home/admin/ci/memgraphrag
+test -s .env
+docker compose -p memgraphrag config -q
+docker compose -p memgraphrag pull memgraphrag
+docker compose -p memgraphrag up -d --no-deps memgraphrag
+curl --fail --silent --show-error --retry 45 --retry-delay 2 \
+  http://127.0.0.1:8010/health
+docker compose -p memgraphrag ps
+```
+
+Для полного восстановления стека после остановки хоста:
+
+```bash
+cd /home/admin/ci/memgraphrag
+test -s .env
+docker compose -p memgraphrag config -q
+docker compose -p memgraphrag up -d
+curl --fail --silent --show-error --retry 45 --retry-delay 2 \
+  http://127.0.0.1:8010/health
+```
+
+### Monitoring
+
+Router должен быть поднят первым: monitoring использует external network
+`router_default` и volume `router_router_logs`.
+
+```bash
+cd /home/admin/ci/monitoring
+test -s .env
+docker compose -p monitoring config -q
+docker compose -p monitoring pull
+docker compose -p monitoring up -d --remove-orphans
+docker compose -p monitoring restart grafana
+curl --fail --silent --show-error --retry 30 --retry-delay 2 \
+  http://127.0.0.1:3000/api/health
+curl --fail --silent --show-error --retry 30 --retry-delay 2 \
+  http://127.0.0.1:9090/-/healthy
+```
+
+После обновления отдельно проверить targets и доставку alert'ов: аудит
+подтвердил listeners, но не подтвердил Prometheus targets, Loki stream,
+dead-man и Telegram delivery.
+
+## Sandbox и gateways
+
+Первичный sandbox создаётся вручную через NemoClaw/OpenShell. Регулярный sync
+выполняет GitLab job `bks/bksamotsvety:sync`: policy update, profiles sync и
+`start-gateways.sh`.
+
+Безопасная ручная повторная синхронизация:
+
+```bash
+cd /home/admin/ci/bksamotsvety
+test -s deploy/.env
+set -a
+source deploy/.env
+set +a
+bash deploy/check-sandbox.sh
+bash deploy/update-policies.sh
+bash deploy/sync-profiles.sh
+bash deploy/start-gateways.sh
+```
+
+### Ограничение после рестарта sandbox
+
+`restart: unless-stopped` относится к host Compose, но не запускает
+supervisord внутри пересозданного OpenShell sandbox. Sandbox entrypoint
+поднимает базовый Hermes gateway; три per-profile gateways автоматически не
+восстанавливаются. Пока startup hook не реализован и не протестирован,
+после каждого restart/recreate sandbox оператор обязан вручную выполнить
+start-gate:
+
+```bash
+cd /home/admin/ci/bksamotsvety
+test -s deploy/.env
+set -a
+source deploy/.env
+set +a
+bash deploy/start-gateways.sh
+nemohermes sandbox exec "${NEMOCLAW_SANDBOX_NAME:-bks-production}" -- bash -c \
+  'export PATH="$PATH:/sandbox/.local/bin"; supervisorctl -c /tmp/supervisord.conf status'
+```
+
+Успех — ровно три `RUNNING`: director, marketing, experiment. Отдельный
+experiment token должен существовать в canonical CI variables; его значение
+не выводить. Отсутствие токена переводит experiment в `autostart=false` и
+нарушает контракт.
+
+## Router quality gate
+
+Канонический gate — **ручной GitLab CI job `quality-gate`** на `gb10-shell`;
+его запускают перед merge/release для изменений `classifier.py`,
+`litellm_config.base.yaml`, `docker-compose.yml`, `Dockerfile` или
+`supervisord.conf`. Обычный pipeline не запускает этот платный batch
+автоматически.
+
+Исторический локальный pre-push hook удалён. Он не является частью текущего
+контроля и не должен считаться доказательством production gate.
+
+Локальный эквивалент запускается только через eval sandbox:
+
+```bash
+cd /home/admin/projects/nemohermes_bks/router/eval/sandbox
+./run.sh /sandbox/.venv/bin/python3 gate.py
+```
+
+Интерпретация:
+
+- `GATE: OK`, exit `0` — сравнение выполнено, регрессии не найдено;
+- `GATE: FAIL`, exit `1` — деплой блокировать;
+- `GATE: SKIP`, exit `0` — инфраструктурная ошибка/недоступен
+  `claude-cli`; **это не PASS**. Production change требует повторного
+  успешного запуска или явного документированного risk waiver.
+
+`--update-baseline` не является штатной проверкой. Его применять только после
+review и одобрения намеренного изменения baseline.
+
+## Backup: контракт полноты
+
+Backup запускает `bks-backup.timer` ежедневно в 03:00. Полный набор за дату
+`YYYYMMDD` содержит ровно 8 обязательных непустых артефактов:
+
+1. `kanban-default-YYYYMMDD.db`
+2. `kanban-production-YYYYMMDD.db`
+3. `kanban-marketing-YYYYMMDD.db`
+4. `kanban-research-YYYYMMDD.db`
+5. `kanban-platform-YYYYMMDD.db`
+6. `profiles-YYYYMMDD.tar.gz`
+7. `memgraphrag-data-YYYYMMDD.tar.gz`
+8. `qdrant-YYYYMMDD.tar.gz`
+
+Контракт успеха: **все 8 файлов существуют и непусты, итоговая строка содержит
+`Errors: 0`, затем набор проходит изолированный restore/integrity test**.
+Свежесть `.last_backup` или одного архива сама по себе недостаточна.
+
+Текущий `bks-backup.sh` снимает live tar каталога Qdrant без snapshot API и
+без остановки контейнера. Такой файл нельзя считать консистентным только по
+наличию и размеру: обязательна изолированная проверка открытия коллекций.
+Целевой фикс — Qdrant snapshot API либо контролируемый backup при остановленном
+контейнере.
+
+Ручной запуск и проверка текущего набора:
+
+```bash
+START_EPOCH="$(date +%s)"
+sudo systemctl start bks-backup.service
+journalctl -u bks-backup.service -n 100 --no-pager
+
+BACKUP_DIR=/home/admin/backups/bks
+BACKUP_LOG=/home/admin/servers/backup/backup.log
+DATE="$(date +%Y%m%d)"
+[ "$(stat -c %Y "$BACKUP_LOG")" -ge "$START_EPOCH" ]
+expected=(
+  "kanban-default-${DATE}.db"
+  "kanban-production-${DATE}.db"
+  "kanban-marketing-${DATE}.db"
+  "kanban-research-${DATE}.db"
+  "kanban-platform-${DATE}.db"
+  "profiles-${DATE}.tar.gz"
+  "memgraphrag-data-${DATE}.tar.gz"
+  "qdrant-${DATE}.tar.gz"
+)
+missing=0
+for artifact in "${expected[@]}"; do
+  if [ ! -s "${BACKUP_DIR}/${artifact}" ]; then
+    printf 'MISSING_OR_EMPTY %s\n' "${BACKUP_DIR}/${artifact}" >&2
+    missing=$((missing + 1))
+  fi
+done
+summary="$(grep '=== BKS Backup done\.' \
+  "$BACKUP_LOG" | tail -n 1)"
+printf '%s\n' "$summary"
+case "$summary" in
+  *"Errors: 0."*) ;;
+  *) printf 'BACKUP_ERRORS_NOT_ZERO\n' >&2; exit 1 ;;
+esac
+[ "$missing" -eq 0 ]
+printf 'BACKUP_ARTIFACTS_OK 8/8\n'
+```
+
+На 2026-07-21 этот контракт не выполнен. Исторический isolated restore
+2026-07-09 не подтверждает текущий набор. Не проводить fault injection и не
+восстанавливать поверх production; restore выполняется только в отдельных
+путях/портах по утверждённому тест-плану.
+
+## Watchdog и systemd
+
+Watchdog проверяет router, MemGraphRAG, Docker containers, sandbox,
+supervisord, kanban liveness, backup freshness, disk и GPU каждые 5 минут.
+Stale/blocked kanban checks принадлежат cron jobs внутри sandbox.
+
+```bash
+sudo systemctl start bks-watchdog.service
+journalctl -u bks-watchdog.service -n 50 --no-pager
+tail -n 20 /home/admin/servers/watchdog/metrics.jsonl
+systemctl list-timers --no-pager bks-watchdog.timer bks-backup.timer
+```
+
+Текущая реализация watchdog проверяет только возраст новейшего backup-файла,
+не 8/8 и не `Errors: 0`. Поэтому `backup_freshness=OK` нельзя использовать
+как заключение о recoverability.
+
+## Endpoints
+
+| Сервис | Текущий endpoint | Доступ/примечание |
+|---|---|---|
+| GitLab web | `http://192.168.2.180:8929` | требуется аутентификация |
+| GitLab SSH | `ssh://192.168.2.180:2222` | git SSH |
+| Container Registry | `192.168.2.180:5050` | внутренний HTTP registry |
+| Router API | `http://192.168.2.180:4000` | health `/health`, OpenAI API `/v1`; sandbox: `http://host.openshell.internal:4000/v1` |
+| LiteLLM direct | `http://127.0.0.1:4001` | только loopback; обход classifier, не публиковать |
+| MemGraphRAG | `http://192.168.2.180:8010` | sandbox: `http://host.openshell.internal:8010` |
+| Qdrant | `http://qdrant:6333` | только сеть compose `memgraphrag`, host port отсутствует |
+| Grafana | `http://192.168.2.180:3000` | monitoring |
+| Prometheus | `http://192.168.2.180:9090` | monitoring |
+| vLLM Qwen3.6 test contour | `http://192.168.2.180:8088/v1` | не основной router tier |
+| Speech-to-text | Router `:4000`, model `whisper` | LiteLLM → `vllm-whisper`; прямой `:10301` декомиссирован |
+
+Не включать в документацию токены, API keys, `.env` значения, chat IDs или
+GitLab variable values.
+
+## Ключевые пути
+
+| Путь | Назначение |
+|---|---|
+| `/home/admin/ci/router/` | CI production checkout и Compose project `router` |
+| `/home/admin/ci/memgraphrag/` | CI production checkout и Compose project `memgraphrag` |
+| `/home/admin/ci/monitoring/` | CI production checkout и Compose project `monitoring` |
+| `/home/admin/ci/bksamotsvety/` | CI checkout для policy/profile/gateway sync |
+| `/home/admin/projects/nemohermes_bks/{router,MemGraphRAG,monitoring,bksamotsvety}/` | рабочие source repositories; не считать автоматически runtime checkout |
+| `/home/admin/servers/memgraphrag/data/` | MemGraphRAG persistent data |
+| `/home/admin/servers/memgraphrag/qdrant/` | Qdrant persistent storage |
+| `/home/admin/servers/watchdog/` | `check.sh`, env, state, `metrics.jsonl` |
+| `/home/admin/servers/backup/` | `bks-backup.sh`, units, `backup.log` |
+| `/home/admin/backups/bks/` | backup artifacts и `.last_backup` |
+| `/etc/systemd/system/bks-watchdog.{service,timer}` | host watchdog units |
+| `/etc/systemd/system/bks-backup.{service,timer}` | host backup units |
+| `/home/admin/models/adapters/` | router LoRA adapters, read-only mount |
+| `/tmp/supervisord.conf` внутри sandbox | runtime supervisor config; теряется при recreate |
+| `/tmp/supervisor/` внутри sandbox | gateway/supervisor logs |
+
+Secrets хранятся в masked/protected GitLab CI/CD Variables и локальных
+gitignored `.env` с режимом `0600`. Проверять наличие/права, не содержимое.
+
+## Историческое приложение — K3s: НЕ ВЫПОЛНЯТЬ
+
+<details>
+<summary><strong>НЕ ВЫПОЛНЯТЬ: декомиссированный K3s-контур (до 2026-07-06)</strong></summary>
+
+Этот материал сохранён только для расследования старых инцидентов. Он не
+является runbook и не должен копироваться в shell.
+
+- K3s v1.32.5 использовался на однонодовом GB10.
+- NVIDIA device plugin не поддерживал unified-memory GB10; применялся
+  privileged pod с hostPath `/dev/nvidia*`.
+- Router был удалён из K3s 2026-07-02.
+- vLLM classifier был удалён 2026-07-03; прежний pod не имел Service.
+- MemGraphRAG и Qdrant перенесены в Docker Compose 2026-07-06, namespace
+  `memgraphrag` и device-plugin DaemonSet удалены.
+- Старые файлы `router/deploy/*.yaml` и
+  `MemGraphRAG/deploy/*-k3s.yaml` — deprecated documentation.
+
+Исторически выполнялись операции установки K3s, настройки kubeconfig,
+`kubectl apply/patch/rollout/logs`, создания Kubernetes Secrets и импорта
+vLLM image в containerd. **Все эти операции запрещены для текущего
+production-контура.** Не создавать namespaces `bks-router`/`memgraphrag`,
+не патчить Kubernetes Secrets и не запускать MemGraphRAG/router через K3s.
+
+</details>

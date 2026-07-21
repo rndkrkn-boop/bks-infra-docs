@@ -1,5 +1,10 @@
 # Спецификация оркестрации: kanban, диспетчер, воркеры, субагенты
 
+> **Актуальный статус на 2026-07-21:** канонический механизм — встроенный
+> gateway dispatch, не отдельный daemon. Контракт deployment — 3 gateway,
+> текущая проверка увидела 2. Полный Telegram E2E не подтверждён; Gate 0
+> **NOT MET**. См. [полный аудит](../audit/full-project-audit-2026-07-21.md).
+
 Опирается на встроенное kanban-ядро Hermes v2026.5.16 (проверено в живом
 sandbox): `hermes kanban {init,boards,create,claim,assign,link,comment,
 complete,block,unblock,heartbeat,dispatch,daemon,watch,runs,notify-*,gc,...}`,
@@ -100,7 +105,8 @@ kanban:
   GB10-хосте больше параллельных large-воркеров не прожуёт ни GPU, ни
   бюджет NVIDIA API. Параметр пересматривается по метрикам (05 §4).
 - `failure_limit: 2` — после 2 подряд spawn_failed/timed_out/crashed
-  карточка блокируется автоматически → watchdog видит blocked → алерт.
+  карточка блокируется автоматически; ежедневный `blocked-digest` доставляет
+  сводку. Watchdog проверяет только liveness kanban, не stale/blocked policy.
 - Живучесть диспетчера = живучесть gateway: supervision шлюзов (05 §2)
   покрывает и dispatch, отдельного pidfile/лога у диспетчера нет —
   смотреть лог gateway.
@@ -121,6 +127,9 @@ kanban:
   воркер сам режет остаток на карточки-потомки.
 
 ### 3.3 Sweeps (страховочные cron-джобы внутри sandbox)
+
+Cron владеет policy для stale/blocked; эти проверки намеренно удалены из
+host-watchdog, чтобы не было двух расходящихся владельцев порогов.
 
 | Джоба | Расписание | Действие |
 |---|---|---|
@@ -175,8 +184,12 @@ analytics (weekly-digest), sweeps выше. Все cron-джобы создаю�
 
 ## 7. Definition of Done этой спецификации
 
-- [ ] daemon работает под supervision, переживает рестарт sandbox
+- [ ] все 3 gateway работают под supervision и встроенный dispatch переживает рестарт sandbox
 - [ ] e2e: отчёт в Telegram → карточка → воркер → комментарий-результат → нотификация в группу (без ручных действий)
 - [ ] искусственно убитый воркер: карточка reclaim'ится и завершается со второй попытки
 - [ ] карточка с заведомо невыполнимой задачей: 2 попытки → blocked → алерт
 - [ ] sweeps и cron-джобы видны в `hermes cron list` после чистого деплоя
+
+На 2026-07-21 эти критерии не закрыты: наблюдались 2 из 3 gateway,
+autorecovery после рестарта sandbox отсутствует, а текущий Telegram E2E и
+fault-тесты не выполнены. Поэтому Gate 0 — **NOT MET / NO-GO**.

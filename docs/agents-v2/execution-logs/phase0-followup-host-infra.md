@@ -1,5 +1,10 @@
 # Phase 0 follow-up — host-infra под git/CI (2026-07-07)
 
+> **Исторический execution snapshot; тело сохранено как было.** Текущее
+> состояние, включая уже установленные monitoring/timers, watchdog только
+> для kanban liveness и решение **Gate 0 NOT MET / NO-GO**, см. в
+> [полном аудите 2026-07-21](../../audit/full-project-audit-2026-07-21.md).
+
 Продолжение [phase0-execution-log.md](phase0-execution-log.md): пункты 0.5
 (watchdog) и 0.10 (бэкапы) доведены от «скрипты лежат на хосте» до
 управляемого состояния. Плюс — найдена и закрыта регрессия CI-раннера.

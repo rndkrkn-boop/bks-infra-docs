@@ -1,5 +1,10 @@
 # Phase 0.10 — restore-тест бэкапа (2026-07-09)
 
+> **Исторический restore snapshot.** Он доказывает читаемость set
+> 2026-07-09, но не полноту текущего backup: аудит 2026-07-21 зафиксировал
+> отсутствие profiles и пяти kanban DB. Текущий Gate 0 — **NOT MET /
+> NO-GO**. См. [полный аудит](../../audit/full-project-audit-2026-07-21.md).
+
 Закрывает хвост №4 из [phase0-followup-host-infra.md](phase0-followup-host-infra.md)
 и пункт DoD 05 §8 «restore-тест пройден и записан в runbook».
 

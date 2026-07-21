@@ -2,6 +2,11 @@
 
 Рендерится нативно в GitLab / GitHub · [mermaid.live](https://mermaid.live) для редактирования
 
+> [!CAUTION]
+> **NO-GO для безусловной приёмки production до Gate 1 (аудит 2026-07-21).**
+> Текущий бэкап неполон, в live работают 2 из 3 контрактных gateway-процессов,
+> а Telegram → kanban → worker → результат → notification не подтверждён текущим E2E.
+
 **Цветовой код (единый для всех диаграмм):**
 
 | Цвет | Компонент |
@@ -35,7 +40,7 @@ flowchart LR
     TG(["✈️ Telegram"]):::external
 
     subgraph GH["GitHub · rndkrkn-boop"]
-        GHBKS["bksamotsvety\nsource-of-truth"]:::dev
+        GHBKS["bksamotsvety\nличный backup"]:::dev
     end
 
     subgraph GITLAB["GitLab CE · :8929"]
@@ -46,7 +51,11 @@ flowchart LR
     end
 
     subgraph SAND["OpenShell Sandbox  bks-production"]
-        AG["8 Hermes Agents"]:::agent
+        GW["3 Telegram gateways по контракту\n2 процесса подтверждены live"]:::agent
+        WK["6 worker-профилей\nreport-processor + 5 остальных"]:::agent
+        MC["6 MCP-профилей\nexperiment + 5 workers\nбез report-processor"]:::agent
+        DISP["dispatch_in_gateway\nkanban claim → worker"]:::agent
+        GW --> DISP --> WK
     end
 
     subgraph DC["Docker Compose · host:4000 (production router)"]
@@ -78,12 +87,12 @@ flowchart LR
     DEV -->|"git push\nbksamotsvety"| GLBKS
     REG -.->|"docker compose pull\n(deploy job)"| DCR & MGR
 
-    TG --> AG
-    AG -->|/v1/chat/completions| DCR
+    TG --> GW
+    GW & WK -->|/v1/chat/completions| DCR
     DCR -->|"http://vllm-classifier:8000"| VLLM
     DCR -->|proxy| NV & AC
-    AG -->|"episodes · retrieve\nhost.openshell.internal:8010"| MGR
-    WD -.->|"health · unhealthy · disk · gpu"| DCR & MGR & AG
+    MC -->|"MCP stdio proxy → HTTP\nhost.openshell.internal:8010"| MGR
+    WD -.->|"liveness · unhealthy · disk · gpu"| DCR & MGR & GW
     WD -.->|алерты| TG
     DCR -.->|"metrics · audit-логи"| GRAF
     WD -.->|"metrics.jsonl → Loki"| GRAF
@@ -117,27 +126,19 @@ flowchart TD
     PUSH(["git push\nGitLab · router/mgr/templates/bksamotsvety"]):::dev
     PUSHGH(["git push\nGitHub · bksamotsvety (личный бэкап,\nбез auto-mirror)"]):::dev
 
-    subgraph HOOK["Pre-push Hook  ·  router only
-.githooks/pre-push
-5 файлов, style: пропуск"]
-        H1{"файлы роутера\nизменились?"}:::stage
-        H2{"все коммиты\nstyle: ?"}:::stage
-        H3["eval/gate.py\nclaude-eval sandbox"]:::fail
-        HW["⚠ INFRA-WARN\nсессия протухла\npush разрешён"]:::warn
-        HO["✓ GATE: OK"]:::ok
-        HF["✗ GATE: FAIL\npush заблокирован"]:::fail
-        H1 -->|нет| HO
-        H1 -->|да| H2
-        H2 -->|да| HO
-        H2 -->|нет| H3
-        H3 -->|"claude-cli\nнедоступен"| HW
-        H3 -->|"регрессия ≥ 1.5"| HF
-        H3 -->|"в норме"| HO
+    subgraph QG["Router quality gate · manual CI job"]
+        QM["ручной запуск\nне обязательный stage"]:::warn
+        QE["eval/gate.py\nclaude-eval sandbox"]:::fail
+        QS["⚠ GATE: SKIP · exit 0\nпри infrastructure failure"]:::warn
+        QO["✓ GATE: OK"]:::ok
+        QF["✗ GATE: FAIL"]:::fail
+        QM --> QE
+        QE -->|infra failure| QS
+        QE -->|в норме| QO
+        QE -->|регрессия| QF
     end
 
-    PUSH --> H1
-    HO & HW --> GL
-    HF -->|"git push\n--no-verify"| GL
+    PUSH --> GL
 
     subgraph GH["GitHub"]
         GHB["rndkrkn-boop/bksamotsvety\n(независимый бэкап)"]:::runner
@@ -146,17 +147,17 @@ flowchart TD
 
     subgraph GL["GitLab CE"]
         subgraph GV["Group bks — CI/CD Variables"]
-            GVAR["LITELLM_MASTER_KEY · LITE_LLM_ENDPOINT\nMEMGRAPHRAG_API_KEY · QDRANT_API_KEY\n(общие, без переименований на границах)"]:::runner
+            GVAR["LITELLM_MASTER_KEY · LITE_LLM_ENDPOINT\nMEMGRAPHRAG_API_KEY · QDRANT_API_KEY\nsource-of-truth; Telegram через provider,\nrouter/memory keys → profile .env literals"]:::runner
         end
 
         subgraph PR["bks/router
-CI: .gitlab-ci.yml · 5 stage"]
+CI: .gitlab-ci.yml · 4 stages"]
             R1["lint
 ruff check + format"]:::ci
             R2["eval-config
 render + smoke"]:::ci
             R3["test → unit-test
-25 тестов, junit report"]:::ok
+64/64 теста (аудит 2026-07-21)"]:::ok
             R4["kaniko build
 --insecure
 main→latest
@@ -165,23 +166,27 @@ dev→dev"]:::ci
 docker compose up -d
 + health-check
 + sync-trigger → BK2"]:::ci
-            R1 --> R2 --> R3 --> R4 --> R5
+            R1 --> R2 & R3
+            R2 & R3 --> R4 --> R5
         end
         subgraph PM["bks/memgraphrag
-lint·test·build·deploy (4 stage)"]
+CI: lint · test · build · smoke · deploy"]
             M1["lint
 ruff check + format"]:::ci
             M2["test
 pytest tests/
-54 total (3 files)"]:::ok
+56/56 тестов (аудит 2026-07-21)"]:::ok
             M3["kaniko build
 --timeout 30m
 HF cache: build-arg"]:::ci
+            MS["offline-smoke
+--network none
+Contriever weights"]:::ok
             M4["deploy (gb10-shell)
 docker compose up -d
 + health-check
 + sync-trigger → BK2"]:::ci
-            M1 --> M2 --> M3 --> M4
+            M1 --> M2 --> M3 --> MS --> M4
         end
         subgraph PB["bks/bksamotsvety
 CI: .gitlab-ci.yml · 2 stage"]
@@ -193,13 +198,10 @@ deploy/.env ← group+project vars
             BK1 --> BK2
         end
         subgraph PS["bks/sandbox-templates
-lint·validate"]
-            S1["lint
-ruff check"]:::ok
-            S2["validate-presets
+validate stage"]
+            S1["validate-presets
 YAML parse + required keys
 (host·port·protocol·enforcement)"]:::ok
-            S1 --> S2
         end
         subgraph PH["bks/host-infra
 CI: .gitlab-ci.yml · 2 stage"]
@@ -221,10 +223,11 @@ compose -p monitoring up -d
 + проверка loki-стрима"]:::ok
             MO1 --> MO2
         end
-    end  
+    end
 
     R5 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
     M4 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
+    R3 -.->|"manual; не fail-closed"| QM
 
     subgraph RUN["Runners"]
         RC["bks-docker-runner\ndocker · CPU"]:::runner
@@ -236,7 +239,7 @@ compose -p monitoring up -d
     REG[("Registry\n192.168.2.180:5050")]:::reg
     R4 & M3 --> REG
 
-    style HOOK fill:none,stroke:#7f1d1d,stroke-width:2px
+    style QG   fill:none,stroke:#7f1d1d,stroke-width:2px
     style GH   fill:none,stroke:#475569,stroke-width:2px
     style GL   fill:none,stroke:#c2410c,stroke-width:2px
     style GV   fill:none,stroke:#6b7280,stroke-width:1px,stroke-dasharray:4
@@ -268,25 +271,29 @@ flowchart LR
     TGP(["✈️ Telegram\nпрод-группа"]):::tg
     TGM(["✈️ Telegram\nmkt-группа"]):::tg
 
-    subgraph SAND["OpenShell Sandbox  bks-production  ·  SSRF-guard"]
-        subgraph GA["auto tier"]
+    subgraph SAND["OpenShell Sandbox  bks-production · 9 profiles · SSRF-guard"]
+        subgraph GA["Telegram gateways · contract 3 / live 2"]
             DB["director-bot"]:::auto
             EXP["experiment"]:::auto
             MKT["mkt-bot"]:::auto
         end
-        subgraph GM["mid tier"]
+        DISP["dispatch_in_gateway\nclaim kanban card ≤60s\nspawn worker profile"]:::auto
+        subgraph GM["workers · mid tier"]
+            RP["report-processor"]:::mid
             MM["market-monitor"]:::mid
             ST["structuring"]:::mid
         end
-        subgraph GL["large tier"]
+        subgraph GL["workers · large tier"]
             AN["analytics"]:::large
             RS["research"]:::large
             CN["content"]:::large
         end
+        DB & EXP & MKT --> DISP
+        DISP --> RP & MM & ST & AN & RS & CN
     end
 
     TGP --> DB & EXP
-    TGM --> MKT & MM
+    TGM --> MKT
     AN & MM -.->|дайджест| TGM
 
     subgraph ROUTER["Docker Compose Router · :4000"]
@@ -298,7 +305,7 @@ flowchart LR
         CLS -->|proxy| LL
     end
 
-    DB & EXP & MKT & MM & AN & ST & RS & CN --> CLS
+    DB & EXP & MKT & RP & MM & AN & ST & RS & CN --> CLS
 
     subgraph CLOUD["Cloud LLM APIs"]
         NV["NVIDIA API\ncheap → nemotron-nano-30b\nmid  → nemotron-super-49b\nlarge → nemotron-ultra-550b"]:::cloud
@@ -306,13 +313,12 @@ flowchart LR
     end
     LL --> NV & AC
 
-    MGR["MemGraphRAG :8010\nhost.openshell.internal\n/api/episodes · /api/retrieve"]:::memory
+    MCP["memgraphrag_mcp.py\nstdio MCP → HTTP"]:::memory
+    MGR["MemGraphRAG host :8010\nhost.openshell.internal\n/api/episodes · /api/retrieve"]:::memory
     WEB(["Internet\nnous-web"]):::ext
-    STT["STT :10301\nfaster-whisper\nlarge-v3"]:::ext
-
-    ST & RS & EXP & MM & AN & CN -->|"MCP\nmcp_memgraphrag_*"| MGR
+    ST & RS & EXP & MM & AN & CN -->|"mcp_memgraphrag_*"| MCP
+    MCP -->|"HTTP + host-side API key"| MGR
     RS & MM -->|web_search| WEB
-    DB & MKT -.->|голос| STT
 
     style SAND   fill:none,stroke:#15803d,stroke-width:2px
     style GA     fill:none,stroke:#22c55e,stroke-width:1px,stroke-dasharray:4
@@ -344,14 +350,14 @@ flowchart TD
     classDef dead   fill:#1e293b,stroke:#475569,color:#94a3b8,stroke-width:1px
     classDef tg     fill:#0369a1,stroke:#38bdf8,color:#fff,stroke-width:1px
 
-    K3SDEAD["K3s ДЕКОМИССИРОВАН 2026-07-06\nnamespace memgraphrag удалён\nnvidia-device-plugin удалён\nk3s.service stopped + disabled"]:::dead
+    K3SDEAD["K3s: активного кластера нет\nнет listener :6443 / enablement symlink\nunit может оставаться установленным"]:::dead
 
     TGA(["✈️ Telegram\nканал алертов"]):::tg
 
     subgraph HOST["Хост 192.168.2.180"]
         subgraph SYSD["systemd — нижний supervision-слой · bks/host-infra"]
-            WD["bks-watchdog.timer · 5 мин\nrouter · memgraphrag · контейнеры\nsandbox · supervisord · kanban\nбэкап < 26ч · диск < 85% · GPU"]:::sysd
-            BK["bks-backup.timer · 03:00\nkanban.db ×5 · профили Hermes\nmemgraphrag data · qdrant\nретенция 7 дней"]:::sysd
+            WD["bks-watchdog.timer · 5 мин\nrouter · memgraphrag · контейнеры\nsandbox · supervisord · kanban liveness only\nbackup freshness · disk · GPU"]:::sysd
+            BK["bks-backup.timer · 03:00\nцель: 8 артефактов\nQdrant: live storage tar · consistency risk\nтекущий run: incomplete / 1 error\nprofiles missing · kanban.db 0/5"]:::sysd
         end
 
         subgraph DOCKER["docker · compose-стеки"]
@@ -359,7 +365,7 @@ flowchart TD
             MGR["memgraphrag :8010\nqdrant (внутр. сеть)\nTRANSFORMERS_OFFLINE=1"]:::memory
             MONS["monitoring (bks/monitoring)\ngrafana :3000 · prometheus :9090\nloki + promtail\nсеть router_default external"]:::deploy
             GLB["gitlab :8929 · registry :5050\nrunners: docker · gpu ·\ngitlab-runner-shell (gb10-shell,\ncompose-def в bks/host-infra,\ngroup_add: DOCKER_GID)"]:::deploy
-            SBX["OpenShell sandbox\nbks-production\nsupervisord: gw-director-bot\ngw-mkt-bot · gw-experiment"]:::agent
+            SBX["OpenShell sandbox bks-production\n9 profiles: 3 gateways + 6 workers\ndispatch_in_gateway integrated\nlive supervision: 2/3 gateways"]:::agent
         end
 
         DATA[("bind mounts:\n/home/admin/servers/*\nбэкапы: /home/admin/backups/bks/")]:::data
@@ -409,7 +415,7 @@ policy-пресеты из sandbox-templates/"]
 
     subgraph HPR["Hermes Presets"]
         PR1["github/gitlab-hermes\nread-only git\nMR/PR via API only"]:::preset
-        PR2["internal-api.yaml\nrouter :4000\ndocker-compose\nmemgraphrag :8000\nSTT :10301"]:::preset
+        PR2["internal-api.yaml\nrouter :4000\ndocker-compose\nmemgraphrag host :8010"]:::preset
         PR3["local-inference\n⚠ НЕ в presets/\nапстрим NemoClaw\n(vLLM :8088 / Ollama :11434)"]:::preset
     end
     subgraph CPR["Claude Code Presets"]
@@ -424,7 +430,7 @@ policy-пресеты из sandbox-templates/"]
 
     SSRF["SSRF-guard\nприватные сети блокированы по умолчанию\n10.0.0.0/8 · 172.16.0.0/12\n192.168.0.0/16 · 169.254.0.0/16"]:::guard
     EXPL["Точечные allowed-ip / endpoint правила\nдля каждого внутреннего сервиса"]:::rule
-    CRED["Credential rewrite на egress\nтокены не видны процессу агента"]:::cred
+    CRED["Secret injection reality\nTelegram: OpenShell provider rewrite\nrouter + memory keys: host-side literals\nв profile .env внутри sandbox"]:::cred
 
     PR1 & PR2 & PR3 & PR4 & PR5 & PR6 --> SSRF --> EXPL --> CRED
 
@@ -451,24 +457,21 @@ flowchart LR
 
     SRC["router/\nclassifier.py\nlitellm_config.yaml\nDockerfile"]:::src
 
-    subgraph UNIT["Unit Tests · pytest · без GPU · 25 тестов"]
-        TC["test_classifier.py\n11 тестов\nclassify() · routing\nAsyncMock HTTP"]:::unit
-        TR["test_render_config.py\n14 тестов\nkey discovery · YAML"]:::unit
-                TM["MemGraphRAG/tests/\ntest_api.py · 12 тестов\nTestClient · sys.modules mock\n(ещё 3 файла · 42 теста,\n54 total но не все collectable)"]:::unit
+    subgraph UNIT["Repository tests · audit 2026-07-21"]
+        TC["router pytest\n64/64 PASS"]:::unit
+        TM["MemGraphRAG pytest\n56/56 PASS"]:::unit
     end
 
-    subgraph GATE["Pre-push Eval Gate · router only
-.githooks/pre-push → eval/sandbox/run.sh
-gate.py · 5 файлов, style: пропуск"]
+    subgraph GATE["Quality gate · router · manual CI job"]
         G1["gate.py\nbaseline comparison\navg correctness by tier"]:::gate
         G2["eval_router.py\ncheap/mid vs golden Sonnet"]:::gate
         G3["claude_cli.py\nclaude -p · ClaudeCliError"]:::gate
         SB(["claude-eval sandbox\nOpenShell isolated"]):::gate
-        GW["⚠ INFRA-WARN\nclause-cli недоступен\npush не блокируется"]:::warn
+        GW["⚠ GATE: SKIP · exit 0\ninfrastructure failure\nне fail-closed"]:::warn
         GP["✓ GATE: OK\n< 1.5 регрессии"]:::ok
-        GF["✗ GATE: FAIL\nрегрессия ≥ 1.5\npass → fail curated"]:::fail
+        GF["✗ GATE: FAIL\nрегрессия ≥ 1.5\ncurated pass → fail"]:::fail
         G1 --> G2 --> G3 --> SB
-        SB -->|session протухла| GW
+        SB -->|infra failure| GW
         SB -->|в норме| GP
         SB -->|регрессия| GF
     end
@@ -494,7 +497,8 @@ gate.py · 5 файлов, style: пропуск"]
         TA --> PII["pii-cleaner-lora-v1 ✅\nloss=0.034 acc=99.1%"]:::train
     end
 
-    SRC --> UNIT & GATE & TRAIN
+    SRC --> UNIT & TRAIN
+    SRC -.->|"manual CI"| GATE
     UNIT --> PIPE
 
     style UNIT  fill:none,stroke:#166534,stroke-width:2px
