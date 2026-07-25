@@ -1,11 +1,15 @@
 # Полная схема взаимодействия nemohermes_bks
 
 > [!CAUTION]
-> **Статус на 2026-07-21: NO-GO** для безусловной приёмки production до
-> Gate 1. Источник актуального статуса:
-> [`docs/audit/full-project-audit-2026-07-21.md`](./docs/audit/full-project-audit-2026-07-21.md).
-> Схемы ниже описывают проектный контракт. Блоки «Наблюдалось 2026-07-21»
-> отделяют подтверждённый runtime от целевого устройства системы.
+> **Статус на 2026-07-25: NO-GO** для безусловной приёмки production.
+> Источник актуального статуса:
+> [`docs/audit/full-project-audit-2026-07-25.md`](./docs/audit/full-project-audit-2026-07-25.md)
+> (повтор [`2026-07-21`](./docs/audit/full-project-audit-2026-07-21.md)).
+> Все блокеры от 2026-07-21 закрыты; текущие блокеры — сломанная установка
+> `mcp` для MemGraphRAG MCP (read-only `/opt/hermes/.venv`) и неподтверждённый
+> GitLab provenance. Схемы ниже описывают проектный контракт. Блоки
+> «Наблюдалось 2026-07-21» отделяют подтверждённый на тот момент runtime от
+> целевого устройства системы.
 
 ## Состав репозитория
 
@@ -251,14 +255,20 @@ MEMGRAPHRAG_API_KEY и inference-ключи роутера — host-side лит�
 Девять профилей: `analytics`, `content`, `director-bot`, `experiment`,
 `market-monitor`, `mkt-bot`, `report-processor`, `research`, `structuring`.
 Не каждый профиль является постоянно работающим gateway: проектный контракт
-supervision — **три** Telegram gateway (`director-bot`, `mkt-bot`,
-`experiment`), остальные профили вызываются как исполнители.
+supervision — **два** обязательных Telegram gateway (`director-bot`,
+`mkt-bot`), остальные профили вызываются как исполнители. `experiment`
+(`gw-experiment`) зарегистрирован в supervisord, но осознанно не входит
+в обязательный контракт и не запускается `start-gateways.sh`/watchdog
+autoheal — это ручной/опциональный процесс.
 
-> **Наблюдалось 2026-07-21:** watchdog считал supervision-проверку успешной,
-> но runtime сообщил только **2** supervised-программы. Это FAIL относительно
-> контракта из 3 gateway; какой именно процесс отсутствовал, аудит не установил.
-> Реальный Telegram → kanban → worker → result → notification E2E также не
-> подтверждён.
+> **Обновлено 2026-07-25:** контракт из 3 gateway (наблюдение 2026-07-21)
+> пересмотрен до 2 обязательных после аудита — процесс, которого не хватало,
+> это `gw-experiment`. Watchdog проверяет `telegram_egress`, health и лог обоих
+> обязательных gateway и автоматически восстанавливает их через
+> `supervisorctl restart` (подтверждено: recovery за 57s после остановки
+> обоих процессов). Полный recreate sandbox с нуля (bootstrap через
+> `start-gateways.sh` из `deploy/.env`) по-прежнему не проверен — на хосте
+> отсутствуют Telegram credentials в `deploy/.env`.
 
 ### Дополнительные внешние связи профилей
 
@@ -385,8 +395,15 @@ watchdog.env, state/, metrics.jsonl, backup.log, /home/admin/backups/bks/
 > архив профилей не создан, ни одна из пяти ожидаемых kanban БД не найдена.
 > Лог сообщил о создании архивов MemGraphRAG и Qdrant, но inventory независимо
 > не подтверждён. Текущая копия неполна (**FAIL**), хотя freshness-проверка
-> watchdog показывала OK. Исторический restore 2026-07-09 всех 8 артефактов
-> не доказывает восстанавливаемость текущего набора.
+> watchdog показывала OK.
+>
+> **Исправлено 2026-07-25:** причиной была не потеря данных, а `PATH` без
+> `~/.local/bin` в systemd unit `bks-backup.service` (`User=admin`, без
+> `Environment=`) — `nemohermes` не резолвился (exit 127), поэтому все
+> kanban/profiles-шаги молча проваливались. Добавлен явный `Environment=PATH=...`
+> в unit; проверочный прогон — `Errors: 0`, все 8 артефактов, isolated-restore
+> integrity_check прошёл на всех SQLite. См.
+> [`docs/audit/full-project-audit-2026-07-25.md`](./docs/audit/full-project-audit-2026-07-25.md).
 - **gitlab-runner-shell/**: compose-определение CI-раннера (см. §0) —
   пересоздание только вручную с хоста (runner не может пересоздать сам себя):
   `cd /home/admin/servers/gitlab-runner-shell && docker rm -f gitlab-runner-shell && docker compose up -d`.

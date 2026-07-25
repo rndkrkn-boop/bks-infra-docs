@@ -1,11 +1,15 @@
 # nemohermes_bks
 
 > [!CAUTION]
-> **Статус на 2026-07-21: NO-GO** для безусловной приёмки production до
-> Gate 1. Актуальные наблюдения, риски и критерии повторной проверки:
-> [`docs/audit/full-project-audit-2026-07-21.md`](./docs/audit/full-project-audit-2026-07-21.md).
-> Описанная ниже архитектура — проектный контракт; фактически подтверждённое
-> состояние и отклонения фиксирует аудит.
+> **Статус на 2026-07-25: NO-GO** для безусловной приёмки production.
+> Актуальные наблюдения, риски и критерии повторной проверки:
+> [`docs/audit/full-project-audit-2026-07-25.md`](./docs/audit/full-project-audit-2026-07-25.md)
+> (повтор [`2026-07-21`](./docs/audit/full-project-audit-2026-07-21.md)).
+> Все блокеры от 2026-07-21 закрыты живыми доказательствами; текущие
+> блокеры — сломанная установка `mcp` для MemGraphRAG MCP-инструментов
+> (read-only `/opt/hermes/.venv`, все 9 профилей) и неподтверждённый
+> GitLab provenance. Описанная ниже архитектура — проектный контракт;
+> фактически подтверждённое состояние и отклонения фиксирует аудит.
 
 Документационный meta-repo и workspace enterprise-развёртывания Hermes-агентов
 на базе NVIDIA NemoClaw / OpenShell для клиента «БайкалКварцСамоцветы».
@@ -19,7 +23,7 @@
 
 | Папка | Что это | Документация |
 |---|---|---|
-| [`bksamotsvety/`](./bksamotsvety/) | Прод-деплой: 1 sandbox `bks-production`, 9 профилей Hermes; контракт — 3 Telegram gateway, аудит наблюдал 2 supervised-программы | [README](./bksamotsvety/README.md) |
+| [`bksamotsvety/`](./bksamotsvety/) | Прод-деплой: 1 sandbox `bks-production`, 9 профилей Hermes; контракт — 2 обязательных Telegram gateway (`director-bot`, `mkt-bot`), `experiment` опционален | [README](./bksamotsvety/README.md) |
 | [`router/`](./router/) | Свой LLM-роутер: classifier (Qwen3.5-0.8B) + LiteLLM, выбор tier по сложности задачи | [README](./router/README.md) |
 | [`MemGraphRAG/`](./MemGraphRAG/) | Сервис графовой памяти (episodes + retrieval) | [README](./MemGraphRAG/README.md) |
 | [`sandbox-templates/`](./sandbox-templates/) | Enterprise-шаблон сетевых политик OpenShell/NemoClaw — база для любого клиента, не только bksamotsvety | [README](./sandbox-templates/README.md) |
@@ -31,7 +35,7 @@
   [`ARCHITECTURE_MERMAID.md`](./ARCHITECTURE_MERMAID.md).
 - **Деплой, обновления, ключи, eval gate** → [`DEPLOY.md`](./DEPLOY.md).
   K3s декомиссирован и не относится к активным операциям; при расхождении
-  playbook с аудитом руководствоваться аудитом от 2026-07-21.
+  playbook с аудитом руководствоваться аудитом от 2026-07-25.
 - **Развернуть/обновить прод bksamotsvety** → [`bksamotsvety/README.md`](./bksamotsvety/README.md)
   (`deploy/setup.sh`, `deploy/sync-profiles.sh`).
 - **Поднять/проверить LLM-роутер** → [`router/README.md`](./router/README.md)

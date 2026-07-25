@@ -1,28 +1,28 @@
 # BKS NemoHermes — операционный playbook
 
 Актуальный справочник эксплуатации контура на хосте `192.168.2.180`.
-Состояние и ограничения зафиксированы на **2026-07-21** по
-[`docs/audit/full-project-audit-2026-07-21.md`](./docs/audit/full-project-audit-2026-07-21.md)
+Состояние и ограничения зафиксированы на **2026-07-25** по
+[`docs/audit/full-project-audit-2026-07-25.md`](./docs/audit/full-project-audit-2026-07-25.md)
+(повтор [`2026-07-21`](./docs/audit/full-project-audit-2026-07-21.md))
 и [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## NO-GO
 
-**Безусловная приёмка production до Gate 1: NO-GO.**
+**Безусловная приёмка production: NO-GO.** Все блокеры от 2026-07-21
+(бэкап, gateway-контракт, restart recovery, Telegram E2E, offline model
+smoke, fault injection, документация) закрыты живыми доказательствами
+2026-07-25. Текущие блокеры другие:
 
-До повторной приёмки обязательно:
+1. `/opt/hermes/.venv` read-only внутри sandbox сломал обязательную
+   установку пакета `mcp` для MemGraphRAG MCP-инструментов у всех
+   9 профилей (обнаружено при попытке подключить Matrix-платформу,
+   не чинится живой policy — нужен новый sandbox rebuild с mcp/mautrix,
+   запечёнными в образ);
+2. GitLab pipeline/runner/image provenance по-прежнему не подтверждён
+   (read-only токен не был реально предоставлен).
 
-1. получить текущий бэкап из всех 8 обязательных артефактов с `Errors: 0`
-   и восстановить его в изолированном контуре;
-2. восстановить контракт из трёх supervised Telegram gateways и доказать
-   восстановление после рестарта sandbox не более чем за две минуты;
-3. выполнить реальный Telegram E2E с audit ID:
-   intake → kanban → worker → result → notification → idempotent replay;
-4. получить read-only доказательства GitLab pipeline/runner/image provenance;
-5. только после доказанного бэкапа и rollback выполнять fault-тесты.
-
-До закрытия этих условий запрещено трактовать зелёный watchdog, свежую
-`.last_backup`, наличие listener или исторический restore-тест как достаточное
-доказательство готовности production.
+До закрытия этих условий MCP-память нельзя считать рабочей ни для одного
+профиля, а CI/CD provenance — недоказанным.
 
 ## Текущий статус
 
@@ -211,6 +211,24 @@ experiment token должен существовать в canonical CI variables
 не выводить. Отсутствие токена переводит experiment в `autostart=false` и
 нарушает контракт.
 
+С 2026-07-22 watchdog обнаруживает `telegram paused`, проверяет Telegram
+egress без реального bot token и перезапускает обязательные
+`gw-director-bot`/`gw-mkt-bot` через уже работающий supervisord. Перед restart
+старые supervisor-логи очищаются, чтобы stale marker не создавал restart loop.
+Полный bootstrap после recreate sandbox требует заполненного host-side
+`deploy/.env`; на текущем хосте Telegram credentials там отсутствуют, поэтому
+autorecovery после recreate всё ещё не считается доказанным.
+
+Production-хост использует DNS `192.168.2.1`, затем `1.1.1.1`. Уже работающий
+sandbox может сохранить старый `resolv.conf`; до следующего recreate его нужно
+проверять отдельно. DNS-ответ не доказывает доступность Telegram: наблюдались
+TLS handshake timeout, поэтому watchdog имеет отдельную проверку
+`telegram_egress`. LAN, ICMP, raw TCP, NIC и host conntrack при этом исправны;
+дефект локализован до прозрачного XKeen/Xray-маршрута на Keenetic. Restart
+XKeen не исправил выборку (около 45% успешных HTTPS-запросов). До ремонта
+outbound/VPS или успешного direct-route control test Telegram нельзя считать
+стабильным.
+
 ## Router quality gate
 
 Канонический gate — **ручной GitLab CI job `quality-gate`** на `gb10-shell`;
@@ -311,7 +329,8 @@ printf 'BACKUP_ARTIFACTS_OK 8/8\n'
 ## Watchdog и systemd
 
 Watchdog проверяет router, MemGraphRAG, Docker containers, sandbox,
-supervisord, kanban liveness, backup freshness, disk и GPU каждые 5 минут.
+Telegram egress, supervisord/gateway runtime, kanban liveness, backup
+freshness, disk и GPU каждые 5 минут.
 Stale/blocked kanban checks принадлежат cron jobs внутри sandbox.
 
 ```bash

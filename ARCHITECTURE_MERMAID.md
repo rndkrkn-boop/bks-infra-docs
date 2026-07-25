@@ -3,9 +3,12 @@
 Рендерится нативно в GitLab / GitHub · [mermaid.live](https://mermaid.live) для редактирования
 
 > [!CAUTION]
-> **NO-GO для безусловной приёмки production до Gate 1 (аудит 2026-07-21).**
-> Текущий бэкап неполон, в live работают 2 из 3 контрактных gateway-процессов,
-> а Telegram → kanban → worker → результат → notification не подтверждён текущим E2E.
+> **NO-GO для безусловной приёмки production (аудит 2026-07-25, повтор
+> 2026-07-21).** Бэкап, gateway-контракт (теперь 2/2) и реальный Telegram
+> E2E подтверждены живыми доказательствами 2026-07-25. Текущие блокеры —
+> сломанная установка `mcp` для MemGraphRAG MCP (read-only
+> `/opt/hermes/.venv`) и неподтверждённый GitLab provenance. См.
+> [`docs/audit/full-project-audit-2026-07-25.md`](./docs/audit/full-project-audit-2026-07-25.md).
 
 **Цветовой код (единый для всех диаграмм):**
 
