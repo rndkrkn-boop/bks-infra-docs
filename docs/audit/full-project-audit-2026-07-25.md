@@ -13,10 +13,12 @@ of which this audit itself introduced:
    remount the underlying bind mount). This was discovered while wiring a
    new Matrix messaging platform, and it also **broke the mandatory `mcp`
    package install** that MemGraphRAG MCP tools depend on for all 9
-   profiles. `mcp` is currently **not installed** in the rebuilt sandbox —
-   MCP memory tools are silently no-op for every profile until this is
-   fixed (requires baking the dependency into the sandbox image at build
-   time, i.e. another `sandbox rebuild`).
+   profiles. The correct fix (bake `mcp` into `Dockerfile.base` at build
+   time) was written and verified in isolation the same day, but
+   **`nemohermes sandbox rebuild` itself has a bug (R15)** that pins the
+   base image to a stale cached digest and never picks up the rebuilt
+   image — so `mcp` is still **not installed** in the live sandbox.
+   MCP memory tools remain silently no-op for every profile.
 2. GitLab pipeline/runner/image provenance remains unauthenticated and
    unverified — unchanged from 2026-07-21. A personal access token was
    requested but never actually supplied (the file created for it
@@ -217,6 +219,30 @@ after the rebuild. This means MemGraphRAG's MCP tools are currently
 unavailable to every one of the 9 profiles, not just the two involved in
 Matrix. This is now the primary open blocker — see R11.
 
+**R11 follow-up (same day):** fixed at the correct layer — added a build-time
+`RUN uv pip install ... mcp` to `agents/hermes/Dockerfile.base` (root-owned,
+before the runtime read-only policy applies), and removed the now-dead
+runtime step from `bksamotsvety/deploy/setup.sh`. Verified correct in
+isolation: `nemohermes sandbox rebuild` did trigger a real base-image
+rebuild this time (`docker build` step `[11/12] RUN uv pip install ...
+mcp` resolved `mcp==1.28.1` and wrote a new image
+`sha256:9c59e394...`). But the resulting sandbox still could not `import
+mcp` — **R15**: `nemohermes sandbox rebuild` resumes onboarding from a
+cached session that pins the base image by digest
+(`hermes-sandbox-base@sha256:7595d38c...`, dated 2026-05-29, matching the
+`v0.0.55` tag) rather than re-resolving `:latest` after a fresh build, so
+the freshly built image is silently never used. This is a bug in
+`nemohermes`'s own resume/rebuild logic, not in this project's Dockerfile
+or scripts. Also required editing the actual build source
+`~/.nemoclaw/source/agents/hermes/Dockerfile.base` (a separate vendored
+clone of upstream `NVIDIA/NemoClaw` at `95d483fe`, not this repo's
+`NemoClaw/` checkout) to get even the one real rebuild to pick up the fix
+— `nemohermes sandbox rebuild` has no equivalent of `onboard --from` to
+point at a local checkout. Production was restored to healthy (10/10
+watchdog) after this attempt using the same kanban-restore procedure as
+the first rebuild, this time from a backup taken immediately beforehand
+(data-loss window: minutes, not up to an hour).
+
 No changes were left half-applied: `director-bot`/`mkt-bot` `config.yaml`
 were verified to contain zero mentions of `matrix` after the abandoned
 attempt.
@@ -239,6 +265,7 @@ attempt.
 | **R12** | **New, Medium** | `nemohermes sandbox rebuild`'s internal backup/restore does not cover `~/.hermes/kanban/` or `board.json`. Any future rebuild will lose kanban data unless the daily `bks-backup.sh` output is fresher than the rebuild, or this is fixed upstream. |
 | **R13** | **New, Medium** | The `matrix/` component (Synapse + Postgres, real production data and bot credentials) has no git repository at all — unlike every sibling component (`host-infra`, `bksamotsvety`, etc.), and is excluded from the daily backup contract (its own README even says so). |
 | **R14** | **New, Low** | Gateway supervisor stdout logs are WARNING-level only; the only place that shows real message-processing activity is the per-profile `logs/agent.log`. Not a blocker, but makes the watchdog/supervisor log misleading for incident response. |
+| **R15** | **New, High — blocks R11's own fix** | `nemohermes sandbox rebuild` resumes onboarding from a cached session pinned to an old base-image digest and never re-resolves `:latest`, so a corrected/rebuilt base image is silently ignored even though the `docker build` itself picks up source changes correctly. Confirmed twice. `rebuild` also has no `--from`-equivalent to point at a local Dockerfile the way `onboard` does. Until this is understood/fixed (in `nemohermes` itself, or by clearing/bypassing the resume cache), R11's source-level fix cannot reach a live sandbox via `rebuild`. |
 
 ## Acceptance matrix (updated)
 
@@ -259,11 +286,13 @@ attempt.
 
 ## Exit criteria for next retest
 
-1. Fix R11: bake `mcp` (and `mautrix`, if Matrix is still wanted) into the
-   Hermes sandbox base image or blueprint so they survive a normal
-   `sandbox rebuild` without needing a writable `/opt/hermes/.venv` at
-   runtime. Rebuild once, verify `mcp` importable and MemGraphRAG MCP
-   tools actually functional from at least one profile.
+1. Resolve R15 first: figure out why `nemohermes sandbox rebuild` doesn't
+   pick up a freshly rebuilt base image (stale cached digest from the
+   resumed onboarding session), or find/use whatever mechanism makes
+   `rebuild` re-resolve `:latest` — this blocks R11 even though the
+   Dockerfile fix itself is already correct and committed. Once unblocked,
+   verify `mcp` importable and MemGraphRAG MCP tools actually functional
+   from at least one profile after a rebuild.
 2. Decide and act on R13: either give `matrix/` its own git repository
    (matching every sibling component) or explicitly document why it's
    exempt, and add `/home/admin/servers/matrix/` to the daily backup
