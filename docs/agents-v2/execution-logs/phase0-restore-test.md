@@ -67,7 +67,7 @@ curl -sf http://localhost:8010/health
 | # | Что | Статус |
 |---|-----|--------|
 | 1 | `sudo /home/admin/servers/install.sh` — юниты + таймеры watchdog/backup | **всё ещё ждёт sudo**; без таймера бэкапы только ручные (последний до этого лога был 3 дня как несвежий) |
-| 2 | `WATCHDOG_TELEGRAM_CHAT_ID` | пуст. Уточнение 2026-07-09: бот СОСТОИТ в ops-группе `bks_product` (`-1004371976422`) — это тот же бот, что у Grafana contact point (getUpdates был пуст лишь потому, что апдейты живут 24ч). Кандидат: вписать этот chat_id — watchdog и Grafana шлют в одну группу, роли разделены по §2.7 |
+| 2 | `WATCHDOG_TELEGRAM_CHAT_ID` | пуст. Уточнение 2026-07-09: бот СОСТОИТ в ops-группе `bks_product` (`<ops-group-chat-id>`) — это тот же бот, что у Grafana contact point (getUpdates был пуст лишь потому, что апдейты живут 24ч). Кандидат: вписать этот chat_id — watchdog и Grafana шлют в одну группу, роли разделены по §2.7 |
 | 3 | `BKS_TELEGRAM_EXPERIMENT_TOKEN` | ✅ закрыт до 2026-07-09: gw-experiment работает под supervisord |
 | 4 | Restore-тест | ✅ этот лог |
 | 5 | 10-я проверка watchdog (`docker exec gitlab-runner-shell docker version`) | предложено, не реализовано |

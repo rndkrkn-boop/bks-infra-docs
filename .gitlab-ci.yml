@@ -1,5 +1,6 @@
 stages:
   - docs
+  - compliance
 
 # ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
 # Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
@@ -48,3 +49,64 @@ docs-consistency:
         - .gitlab-ci.yml
   script:
     - python scripts/check-docs-consistency.py
+
+# ── Комплаенс-аудит: правила из compliance/rules.toml ─────────────────────
+# Проверки детерминированные и zero-dep (tomllib в stdlib 3.11), поэтому
+# джобу нужен только git — образ python:3.11-slim его не содержит.
+#
+# GIT_DEPTH: 0 обязателен: правило BCP-002 смотрит дату последнего коммита
+# документов аудита, а при shallow clone (дефолт 20 коммитов) её у файла
+# может просто не быть — проверка провалилась бы на пустом месте.
+compliance-audit:
+  stage: compliance
+  image: python:3.11-slim
+  variables:
+    GIT_DEPTH: "0"
+    COMPLIANCE_OUT_DIR: "$CI_PROJECT_DIR/.compliance-out"
+  rules:
+    # Регулярный прогон по расписанию: комплаенс должен ловить дрейф, а не
+    # только правки, которые кто-то догадался связать с комплаенсом.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - compliance/**/*
+        - scripts/compliance-*.py
+        - ci/compliance-report.sh
+        - tests/test_compliance_audit.py
+        - .gitlab-ci.yml
+        - .gitignore
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends git
+  script:
+    - bash ci/compliance-report.sh
+  artifacts:
+    when: always
+    expire_in: 90 days
+    expose_as: "Комплаенс-отчёт"
+    paths:
+      - .compliance-out/
+
+# ── Тесты движка комплаенса ───────────────────────────────────────────────
+# pytest пиннится намеренно: непиннутая зависимость в CI уже роняла lint в
+# bks/memgraphrag (c0eece8), и правило SUP-002 запрещает это на уровне
+# комплаенса — джоб обязан соблюдать собственные правила.
+compliance-tests:
+  stage: compliance
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - compliance/**/*
+        - scripts/compliance-*.py
+        - tests/test_compliance_audit.py
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends git
+    - pip install --no-cache-dir pytest==9.0.2
+    - git config --global user.email "ci@bks.invalid"
+    - git config --global user.name "bks ci"
+  script:
+    - python -m pytest tests/test_compliance_audit.py -q

@@ -7,3 +7,6 @@ host-infra/
 monitoring/
 matrix/
 .claude/
+
+# Артефакты комплаенс-аудита (публикуются как artifacts CI, не коммитятся)
+.compliance-out/

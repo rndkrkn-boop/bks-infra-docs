@@ -516,6 +516,40 @@ push → lint (ruff check + format) → eval-config (render_litellm_config.py)
 MemGraphRAG на том же аудите: **56/56** тестов прошли. Это repository evidence,
 а не доказательство полного live E2E.
 
+### 4.1 Комплаенс-аудит монорепо (`bks/infra`)
+
+Регуляторные и внутренние требования проверяются исполняемым каталогом правил,
+а не сверкой глазами:
+
+```
+compliance/rules.toml            — 14 правил + реестр исключений (источник истины)
+scripts/compliance-audit.py      — движок (zero-dep, stdlib; область — git ls-files)
+scripts/compliance-dashboard.py  — самодостаточный HTML-дашборд из JSON-отчёта
+compliance/grafana-dashboard.json— тот же комплаенс во времени, поверх Prometheus
+ci/compliance-report.sh          — один вход для CI-джоба и host-таймера
+tests/test_compliance_audit.py   — 17 тестов движка
+```
+
+Покрытие: секреты вне git (NFR-5), изоляция runtime-репозиториев, отсутствие
+`.env`/ключей под версионным контролем, непубликация chat_id и персональных
+данных (152-ФЗ ст.5 ч.4), описанный PII-контур (NFR-6), namespace ACL графа,
+пиннинг образов и зависимостей CI (SLSA Build L2), численный контракт полноты
+бэкапа (NFR-4), свежесть аудиторских свидетельств, явный retention журналов
+(GDPR art.5(1)(e)), лицензия, change-management через git (NFR-9).
+
+```
+push/MR/schedule → compliance-audit (python:3.11-slim, GIT_DEPTH=0)
+                   ├── artifacts: report.json, report.md, dashboard.html (90 дней)
+                   ├── метрики bks_compliance_* → node_exporter textfile → Prometheus
+                   └── exit 1 при нарушении severity ≥ high ([gate].block_at)
+                 → compliance-tests (pytest, пиннутый)
+```
+
+Waiver — риск с владельцем, тикетом и сроком; просроченный не применяется и
+сам становится находкой. WAIVED не засчитывается как выполнение правила, чтобы
+балл соответствия нельзя было поднять выпиской исключений. Детали контракта —
+`docs/compliance/README.md`.
+
 ---
 
 ## Итоговая сводка потоков данных

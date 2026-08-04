@@ -344,6 +344,36 @@ systemctl list-timers --no-pager bks-watchdog.timer bks-backup.timer
 не 8/8 и не `Errors: 0`. Поэтому `backup_freshness=OK` нельзя использовать
 как заключение о recoverability.
 
+## Комплаенс-аудит
+
+Проверка регуляторных и внутренних требований по каталогу
+`compliance/rules.toml` (14 правил; контракт — `docs/compliance/README.md`).
+
+```bash
+# локально: только вердикт
+python3 scripts/compliance-audit.py
+
+# полный набор артефактов + метрики для Prometheus
+COMPLIANCE_OUT_DIR=/tmp/compliance \
+COMPLIANCE_METRICS_DIR=/var/lib/node_exporter/textfile \
+  bash ci/compliance-report.sh
+```
+
+Коды возврата: `0` — чисто, `1` — нарушение severity ≥ `high`, `2` — сломан
+сам инструмент. `2` нельзя трактовать как «всё хорошо»: отчёта в этом случае
+нет вообще.
+
+В CI это джобы `compliance-audit` и `compliance-tests` (stage `compliance`),
+артефакты — `report.json`, `report.md`, `dashboard.html` на 90 дней. На хосте
+предусмотрен таймер `bks-compliance.timer` с `COMPLIANCE_GATE=off`: его работа
+— снять метрику `bks_compliance_*`, а не уронить unit. Блокирует CI, где есть
+кому чинить.
+
+Grafana-дашборд импортируется из `compliance/grafana-dashboard.json`. Панель
+«Возраст последнего прогона» важнее остальных: автоматизированный комплаенс
+отказывает не громко (правило упало), а тихо — задача перестала запускаться,
+а дашборд продолжает показывать последний зелёный результат.
+
 ## Endpoints
 
 | Сервис | Текущий endpoint | Доступ/примечание |

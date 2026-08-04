@@ -134,12 +134,15 @@ chat. Full trace recovered from `~/.hermes/profiles/director-bot/logs/agent.log`
 this is an observability gap worth fixing, see R14):
 
 ```
-07:33:26.638  inbound: platform=telegram chat=-1004371976422 msg='AUDIT-20260725-E2E1 тестовая проверка'
+07:33:26.638  inbound: platform=telegram chat=<ops-group-chat-id> msg='AUDIT-20260725-E2E1 тестовая проверка'
 07:33:26.721  LLM call via router (host.openshell.internal:4000, auto|director-bot)
 07:33:37.457  API call #3 complete, latency 10.8s, in=7238/out=792 tokens
 07:33:37.485  response ready, time=10.8s
-07:33:37.493  [Telegram] Sending response (303 chars) to -1004371976422
+07:33:37.493  [Telegram] Sending response (303 chars) to <ops-group-chat-id>
 ```
+
+> chat_id ops-группы отредактирован до `<ops-group-chat-id>` по правилу PII-001 комплаенс-аудита (152-ФЗ ст.5 ч.4). Значение живёт в GitLab CI Variables
+> и `watchdog.env`, а не в репозитории.
 
 No kanban card was created — correct, since the message was conversational,
 not a task request (the same session had earlier turns like "Заведи доску"

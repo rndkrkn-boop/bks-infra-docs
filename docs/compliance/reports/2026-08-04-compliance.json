@@ -1,0 +1,282 @@
+{
+  "generated_at": "2026-08-04",
+  "repository": "nemohermes_bks",
+  "rules_version": "1.0.0",
+  "gate": {
+    "block_at": "high",
+    "blocking_rules": []
+  },
+  "summary": {
+    "total_rules": 14,
+    "scanned_files": 36,
+    "score_percent": 89.9,
+    "by_status": {
+      "pass": 12,
+      "fail": 0,
+      "waived": 2,
+      "error": 0
+    },
+    "by_severity": {
+      "critical": {
+        "total": 3,
+        "failed": 0,
+        "waived": 0
+      },
+      "high": {
+        "total": 6,
+        "failed": 0,
+        "waived": 1
+      },
+      "medium": {
+        "total": 4,
+        "failed": 0,
+        "waived": 1
+      },
+      "low": {
+        "total": 1,
+        "failed": 0,
+        "waived": 0
+      }
+    },
+    "by_framework": {
+      "NFR": {
+        "total": 7,
+        "passed": 7,
+        "waived": 0,
+        "failed": 0
+      },
+      "152-ФЗ": {
+        "total": 2,
+        "passed": 2,
+        "waived": 0,
+        "failed": 0
+      },
+      "SLSA": {
+        "total": 3,
+        "passed": 1,
+        "waived": 2,
+        "failed": 0
+      },
+      "GDPR": {
+        "total": 1,
+        "passed": 1,
+        "waived": 0,
+        "failed": 0
+      },
+      "GOV": {
+        "total": 1,
+        "passed": 1,
+        "waived": 0,
+        "failed": 0
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "SEC-001",
+      "title": "Секретный материал не попадает под контроль версий",
+      "framework": "NFR",
+      "reference": "NFR-5 (docs/agents-v2/00-vision-and-requirements.md); 152-ФЗ ст.19 ч.2 п.4",
+      "severity": "critical",
+      "rationale": "Канонический store секретов — защищённые GitLab CI/CD Variables. Литерал в git не отзывается ротацией переменной и остаётся в истории коммитов навсегда.",
+      "remediation": "Убрать литерал, перевыпустить секрет, вынести значение в group CI Variables или в OpenShell provider (openshell:resolve:env:...).",
+      "check_type": "forbidden_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "SEC-002",
+      "title": "Runtime-репозитории с секретами изолированы от монорепо",
+      "framework": "NFR",
+      "reference": "NFR-5; ARCHITECTURE.md §1 (deploy/.env — gitignored)",
+      "severity": "critical",
+      "rationale": "Каталоги компонентов — независимые репозитории со своими deploy/.env. Если родительский репо начнёт их отслеживать, .env уедет в bks/infra мимо всех проверок дочерних пайплайнов.",
+      "remediation": "Вернуть путь в .gitignore родительского репозитория.",
+      "check_type": "paths_ignored",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "SEC-003",
+      "title": "Файлы окружения и ключевой материал не отслеживаются git",
+      "framework": "NFR",
+      "reference": "NFR-5; GDPR art.32(1)(b)",
+      "severity": "critical",
+      "rationale": ".env, *.key, *.pem — носители секретов по определению. Шаблоны (.env.example) допустимы и обязаны содержать только плейсхолдеры.",
+      "remediation": "git rm --cached, добавить в .gitignore, перевыпустить секрет.",
+      "check_type": "paths_not_tracked",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "PII-001",
+      "title": "Идентификаторы каналов и персональные данные не публикуются в репозитории",
+      "framework": "152-ФЗ",
+      "reference": "152-ФЗ ст.5 ч.4 (минимизация), ст.19; GDPR art.5(1)(c)",
+      "severity": "high",
+      "rationale": "Telegram chat_id рабочих групп, телефоны и персональные адреса — данные, по которым идентифицируется контур и его участники. Операционное правило проекта прямо запрещает выносить chat_id в логи и отчёты; аудиторский документ в git — такой же публикуемый артефакт.",
+      "remediation": "Заменить литерал плейсхолдером (<ops-group-chat-id>), сам идентификатор держать в CI Variables и watchdog.env.",
+      "check_type": "forbidden_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "PII-002",
+      "title": "PII-контур описан: отдельный namespace и очистка на выходе",
+      "framework": "152-ФЗ",
+      "reference": "NFR-6; 152-ФЗ ст.5 ч.2 (целевое использование); GDPR art.25",
+      "severity": "high",
+      "rationale": "Разделение org-pii и общего графа — единственное, что мешает персональным данным сотрудников растечься по профилям через retrieve. Требование должно быть зафиксировано документально, иначе оно не переживёт смену исполнителя.",
+      "remediation": "Восстановить описание PII-контура в спецификации домена.",
+      "check_type": "required_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "AC-001",
+      "title": "Доступ к графу памяти разграничен per-namespace",
+      "framework": "NFR",
+      "reference": "NFR-6; 152-ФЗ ст.19 ч.2 п.5 (перечень допущенных); ISO 27001 A.5.15",
+      "severity": "high",
+      "rationale": "Профили имеют разный уровень доверия. Read/write ACL по namespace описывает, кто и куда пишет; без этого контракта любая новая интеграция по умолчанию получает доступ ко всему графу.",
+      "remediation": "Вернуть описание namespace ACL в ARCHITECTURE.md.",
+      "check_type": "required_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "SUP-001",
+      "title": "CI не использует плавающие теги образов",
+      "framework": "SLSA",
+      "reference": "SLSA v1.0 Build L2 (воспроизводимость сборки)",
+      "severity": "high",
+      "rationale": ":latest делает пайплайн невоспроизводимым: тот же коммит завтра собирается другим образом. Прецедент в bks уже был — непиннутый ruff 0.16.0 уронил lint без единого изменения кода.",
+      "remediation": "Заменить тег на версию или, лучше, на @sha256-digest.",
+      "check_type": "forbidden_pattern",
+      "status": "waived",
+      "findings": [
+        {
+          "file": ".gitlab-ci.yml",
+          "line": 11,
+          "detail": "совпадение: nam***st (len=31)"
+        }
+      ],
+      "waiver": {
+        "reason": "minlag/mermaid-cli пиннится digest-ом отдельным изменением: у образа нет стабильных версионных тегов в используемом реестре, а подмена тега вслепую ломает mermaid-render — единственную проверку синтаксиса диаграмм.",
+        "owner": "bks/infra",
+        "ticket": "kanban architecture-improvements #7",
+        "expires": "2026-10-01",
+        "expired": false
+      }
+    },
+    {
+      "id": "SUP-002",
+      "title": "Зависимости, устанавливаемые в CI, запиннены",
+      "framework": "SLSA",
+      "reference": "SLSA v1.0 Build L2; инцидент c0eece8 (bks/memgraphrag)",
+      "severity": "high",
+      "rationale": "pip install <pkg> без == тянет мажорную версию в день релиза прямо в прод-пайплайн: без ревью и без возможности повторить вчерашний результат.",
+      "remediation": "Указывать точную версию: pip install ruff==0.15.1.",
+      "check_type": "forbidden_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "SUP-003",
+      "title": "Логика подписи и проверки образов лежит в репозитории",
+      "framework": "SLSA",
+      "reference": "SLSA v1.0 Provenance; kanban architecture-improvements #2",
+      "severity": "medium",
+      "rationale": "Общая cosign-обвязка — единственный способ гарантировать, что «проверено локально» означает «проверено то, что уедет в CI». Пока файл не под контролем версий, подпись прод-образов держится на локальной копии оператора.",
+      "remediation": "Закоммитить ci/cosign-lib.sh вместе с CI-джобом подписи.",
+      "check_type": "paths_tracked",
+      "status": "waived",
+      "findings": [
+        {
+          "file": "ci/cosign-lib.sh",
+          "line": 0,
+          "detail": "путь не под контролем версий"
+        }
+      ],
+      "waiver": {
+        "reason": "Карточка #2 (supply chain, cosign) в работе: обвязка написана и лежит в рабочем дереве, коммит идёт вместе с CI-джобом подписи в рамках той карточки.",
+        "owner": "bks/infra",
+        "ticket": "kanban architecture-improvements #2",
+        "expires": "2026-09-15",
+        "expired": false
+      }
+    },
+    {
+      "id": "BCP-001",
+      "title": "Контракт полноты бэкапа задан численно и проверяем",
+      "framework": "NFR",
+      "reference": "NFR-4; ISO 27001 A.8.13; GDPR art.32(1)(c)",
+      "severity": "high",
+      "rationale": "Свежесть архива не равна его полноте: аудит 2026-07-21 поймал бэкап, который проходил проверку свежести при отсутствующих profiles и пяти kanban DB. Playbook обязан фиксировать точное число артефактов и нулевое число ошибок.",
+      "remediation": "Вернуть в DEPLOY.md раздел «Backup: контракт полноты».",
+      "check_type": "required_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "BCP-002",
+      "title": "Аудиторские свидетельства не старше 90 дней",
+      "framework": "NFR",
+      "reference": "ISO 27001 A.5.35 (независимая проверка); внутренний регламент аудита",
+      "severity": "medium",
+      "rationale": "Отчёт годичной давности описывает не текущую систему. Просроченный аудит — это отсутствие аудита, только с бумагой.",
+      "remediation": "Провести и опубликовать очередной аудит в docs/audit/.",
+      "check_type": "max_age_days",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "LOG-001",
+      "title": "Срок хранения журналов задан явно",
+      "framework": "GDPR",
+      "reference": "GDPR art.5(1)(e) (ограничение хранения); 152-ФЗ ст.5 ч.7",
+      "severity": "medium",
+      "rationale": "Логи диалогов содержат пользовательский ввод. Бессрочное хранение — это накопление персональных данных без срока и основания.",
+      "remediation": "Зафиксировать retention в ARCHITECTURE.md и в конфигурации Loki.",
+      "check_type": "required_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "GOV-001",
+      "title": "Лицензия репозитория присутствует",
+      "framework": "GOV",
+      "reference": "Внутренний регламент публикации кода",
+      "severity": "low",
+      "rationale": "Без LICENSE правовой статус кода не определён ни для кого.",
+      "remediation": "Вернуть файл LICENSE в корень репозитория.",
+      "check_type": "paths_tracked",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    },
+    {
+      "id": "GOV-002",
+      "title": "Изменение прод-конфигурации агентов идёт только через git",
+      "framework": "NFR",
+      "reference": "NFR-9; ISO 27001 A.8.32 (управление изменениями)",
+      "severity": "medium",
+      "rationale": "Ручная правка конфигурации в работающем sandbox не оставляет ни автора, ни отката, ни возможности воспроизвести инцидент.",
+      "remediation": "Вернуть NFR-9 в требования и sync-profiles.sh в процесс деплоя.",
+      "check_type": "required_pattern",
+      "status": "pass",
+      "findings": [],
+      "waiver": null
+    }
+  ]
+}
