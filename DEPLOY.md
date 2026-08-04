@@ -49,7 +49,7 @@ smoke, fault injection, документация) закрыты живыми д
 |---|---|
 | Router + LiteLLM + vLLM classifier/OCR/Whisper | Docker Compose, project `router` |
 | MemGraphRAG + Qdrant | Docker Compose, project `memgraphrag` |
-| Grafana + Prometheus + Loki + Promtail | Docker Compose, project `monitoring` |
+| Grafana + Prometheus + Loki + Alloy | Docker Compose, project `monitoring` |
 | Sandbox, профили, политики, gateways | NemoClaw/`nemohermes` + OpenShell |
 | Watchdog и backup | host systemd services/timers |
 
@@ -165,6 +165,56 @@ curl --fail --silent --show-error --retry 30 --retry-delay 2 \
 После обновления отдельно проверить targets и доставку alert'ов: аудит
 подтвердил listeners, но не подтвердил Prometheus targets, Loki stream,
 dead-man и Telegram delivery.
+
+#### Однократно: переход Promtail → Alloy (2026-08-04)
+
+Сбор логов переведён с Promtail на Grafana Alloy, Loki поднят до 3.7.
+Штатный `up -d --remove-orphans` выше сам снимает контейнер
+`monitoring-promtail` (его больше нет в compose) — отдельных действий не
+нужно, но есть три операционных нюанса:
+
+1. **Том `promtail_positions` не удалять.** Alloy импортирует
+   `/tmp/positions.yaml` как legacy-файл при первом старте. Без него он
+   перечитает все три JSONL с нуля и продублирует в Loki то, что там уже
+   лежит.
+2. **`docker exec monitoring-loki ...` больше не работает:** образ
+   loki 3.7 — distroless, в нём нет ни shell, ни wget. Пробник изнутри
+   docker-сети — `monitoring-grafana` (в той же сети, с `curl`).
+3. **Первые записи ждать до 5 минут:** watchdog пишет `metrics.jsonl` раз
+   в 5 минут, до его прогона счётчик доставки будет стоять.
+
+Проверка после обновления:
+
+```bash
+# alloy поднялся и готов
+docker exec monitoring-grafana curl -sf http://alloy:12345/-/ready
+
+# логи реально доезжают (счётчик растёт только при успешном push в Loki);
+# dropped_entries должен быть 0
+docker exec monitoring-grafana curl -s http://alloy:12345/metrics \
+  | grep -E '^loki_write_(sent|dropped)_entries_total'
+
+# отсеянный мусор виден отдельно и не молча
+docker exec monitoring-grafana curl -s http://alloy:12345/metrics \
+  | grep '^loki_process_dropped_lines_total'
+
+# стримы на месте (на эти job-лейблы завязаны панели дашбордов)
+docker exec monitoring-grafana curl -s \
+  'http://loki:3100/loki/api/v1/label/job/values'
+```
+
+Новый фильтрующий слой (structured metadata) проверяется запросами в
+Grafana Explore — они не требуют парсера и должны возвращать строки:
+
+```
+{job="bks-watchdog"} | status="fail"
+{job="security-audit"} | level="error"
+{job="security-audit"} | category="pii"
+```
+
+**Откат.** Вернуть сервис `promtail` и `loki:3.4.2` из git-истории
+`monitoring/docker-compose.yml`, затем тот же `up -d --remove-orphans`.
+Позиции сохранены в неизменном томе, поэтому откат тоже не даёт дублей.
 
 ## Sandbox и gateways
 

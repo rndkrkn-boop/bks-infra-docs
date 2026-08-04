@@ -21,7 +21,7 @@
 | `router/` | Свой LLM-роутер (classifier + LiteLLM) — единая точка инференса для всех профилей bksamotsvety. |
 | `MemGraphRAG/` | Сервис графовой памяти (episodes + retrieval), используется профилями `structuring`/`research`/`experiment`/`market-monitor`/`analytics`/`content`. |
 | `host-infra/` | Хостовый supervision-слой: watchdog (9 проверок / 5 мин / Telegram-алерты), ежедневные бэкапы, compose-определение CI-раннера `gitlab-runner-shell`. Работает systemd-таймерами НА хосте — сознательно слоем ниже docker (см. §2.6). |
-| `monitoring/` | Observability-модуль (выделен из router 2026-07-08): Grafana + Prometheus + Loki + Promtail отдельным compose-проектом. История/дашборды/dead-man алерт на watchdog; первичная тревога остаётся за watchdog (см. §2.7). |
+| `monitoring/` | Observability-модуль (выделен из router 2026-07-08): Grafana + Prometheus + Loki + Alloy отдельным compose-проектом (Promtail заменён на Alloy 2026-08-04). История/дашборды/dead-man алерт на watchdog; первичная тревога остаётся за watchdog (см. §2.7). |
 
 ---
 
@@ -410,15 +410,17 @@ watchdog.env, state/, metrics.jsonl, backup.log, /home/admin/backups/bks/
 
 ## 2.7 Monitoring (bks/monitoring, выделен из router 2026-07-08)
 
-Grafana + Prometheus + Loki + Promtail — отдельный compose-проект
+Grafana + Prometheus + Loki + Alloy — отдельный compose-проект
 `monitoring`: Grafana смотрит за всей системой, не только за роутером.
 К router-стеку подключается external'ами: сеть `router_default`
 (скрейп по Docker DNS) и volume `router_router_logs` (читает логи
 роутера). Данные — в своих volume'ах `monitoring_*` (мигрированы из
 `router_*` 2026-07-08). Рост логов ограничен: stdout контейнеров —
-json-file 10m×3, Loki/Prometheus — retention 30d, metrics.jsonl
-watchdog — самозачистка через mv при >5 МБ (promtail-safe: новый
-inode, без дубликатов в Loki).
+json-file 10m×3, Loki/Prometheus — retention 30d; исключение —
+`{job="security-audit"}`, retention 90d (`retention_stream` в
+`loki/loki-config.yml`): единственный поток с текстом запросов, по нему
+разбирают инциденты постфактум. metrics.jsonl watchdog — самозачистка
+через mv при >5 МБ (shipper-safe: новый inode, без дубликатов в Loki).
 
 Разделение ролей с watchdog (§2.6) — **взаимный надзор, без дублирующих
 алертов** (один инцидент = один канал тревоги):
@@ -429,8 +431,19 @@ inode, без дубликатов в Loki).
 | bks/monitoring | история, дашборды (BKS Router, BKS Health), тренды | watchdog: проверка `docker_containers` ловит unhealthy у monitoring-* |
 
 Потоки: audit/security_audit.jsonl роутера (volume) и metrics.jsonl
-watchdog (bind mount) → promtail → Loki; /metrics router/litellm/vllm-* →
-Prometheus (по Docker DNS через external-сеть). Дашборд «BKS Health»:
+watchdog (bind mount) → alloy → Loki; /metrics router/litellm/vllm-* и
+самого alloy (job `alloy`) → Prometheus (по Docker DNS через
+external-сеть).
+
+Сбор логов переведён с Promtail на **Grafana Alloy** 2026-08-04: promtail
+deprecated с февраля 2025, поддержка закончилась в марте 2026. Вместе с
+Loki 3.7 это дало фильтрующий слой, которого раньше не было: поля записей
+(`check`, `status`, `tier`, `provider`, `profile`, `category`, `risk`) и
+`level` уходят в **structured metadata** — фильтруются на чтении, но не
+входят в идентичность стрима, поэтому stream-лейблы остались прежними
+(`job`, `filename`) и кардинальность не выросла. Время записи берётся из
+её собственного `ts`/`ts_ms`, а не из момента приёма. Подробности и
+процедура отката — `monitoring/README.md`. Дашборд «BKS Health»:
 провалы за 15 мин, dead-man счётчик, разбивка по 9 проверкам, лента fail.
 
 ---

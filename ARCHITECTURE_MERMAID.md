@@ -74,7 +74,7 @@ flowchart LR
     end
 
     subgraph MON["Docker Compose · monitoring (bks/monitoring)"]
-        GRAF["Grafana :3000 · Prometheus :9090\nLoki + Promtail"]:::router
+        GRAF["Grafana :3000 · Prometheus :9090\nLoki + Alloy"]:::router
     end
 
     WD["bks/host-infra · systemd-таймеры\nwatchdog / 5 мин · backup 03:00"]:::external
@@ -366,7 +366,7 @@ flowchart TD
         subgraph DOCKER["docker · compose-стеки"]
             RTR["router\nclassifier :4000 + litellm :4001\nvllm-classifier (LoRA · GPU)"]:::deploy
             MGR["memgraphrag :8010\nqdrant (внутр. сеть)\nTRANSFORMERS_OFFLINE=1"]:::memory
-            MONS["monitoring (bks/monitoring)\ngrafana :3000 · prometheus :9090\nloki + promtail\nсеть router_default external"]:::deploy
+            MONS["monitoring (bks/monitoring)\ngrafana :3000 · prometheus :9090\nloki + alloy\nсеть router_default external"]:::deploy
             GLB["gitlab :8929 · registry :5050\nrunners: docker · gpu ·\ngitlab-runner-shell (gb10-shell,\ncompose-def в bks/host-infra,\ngroup_add: DOCKER_GID)"]:::deploy
             SBX["OpenShell sandbox bks-production\n9 profiles: 3 gateways + 6 workers\ndispatch_in_gateway integrated\nlive supervision: 2/3 gateways"]:::agent
         end
@@ -376,7 +376,7 @@ flowchart TD
 
     WD -.->|"health / unhealthy /\nready-проверки"| RTR & MGR & MONS & SBX
     WD -.->|"OK→FAIL · FAIL→OK\nсводка 09:00"| TGA
-    WD -.->|"metrics.jsonl\n(bind → promtail)"| MONS
+    WD -.->|"metrics.jsonl\n(bind → alloy)"| MONS
     MONS -.->|"dead-man алерт:\nwatchdog молчит > 20 мин"| TGA
     BK -->|"VACUUM INTO · tar"| DATA
     WD -.->|"свежесть бэкапа"| DATA
