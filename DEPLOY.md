@@ -294,6 +294,47 @@ python3 /home/admin/servers/backup/backup-manager.py \
 восстановиться»: полнота новейшего снапшота, его возраст и давность последнего
 restore-drill. Код возврата `1` означает содержательную проблему.
 
+### Деплой v2
+
+Файлы приходят из двух репозиториев: `bks/host-infra` (скрипт, юниты) и
+`nemohermes_bks` (движок, политика). Собираются в один каталог:
+
+```bash
+# из nemohermes_bks
+install -m 755 scripts/backup-manager.py /home/admin/servers/backup/
+install -m 644 backup/retention.toml     /home/admin/servers/backup/
+
+# из host-infra (или автоматически из CI по путям /home/admin/servers/)
+install -m 755 backup/bks-backup.sh            /home/admin/servers/backup/
+install -m 644 backup/bks-backup-drill.service /home/admin/servers/backup/
+install -m 644 backup/bks-backup-drill.timer   /home/admin/servers/backup/
+
+# юниты (drill-таймер новый, поэтому install.sh нужен повторно)
+sudo /home/admin/projects/nemohermes_bks/host-infra/install.sh
+```
+
+Затем однократная миграция существующего хранилища v1 в версионированную
+раскладку — сначала планом, потом применением:
+
+```bash
+python3 /home/admin/servers/backup/backup-manager.py \
+    --policy /home/admin/servers/backup/retention.toml \
+    migrate --root /home/admin/backups/bks            # dry-run
+
+python3 /home/admin/servers/backup/backup-manager.py \
+    --policy /home/admin/servers/backup/retention.toml \
+    migrate --root /home/admin/backups/bks --apply
+```
+
+Миграция переносит (не копирует) плоские файлы: два источника истины об одном и
+том же дне — та самая неоднозначность, из-за которой набор v1 нельзя было
+проверить. Дата берётся из имени файла, а не из `mtime`, потому что `mtime`
+показывает момент последней перезаписи.
+
+Ожидаемый результат для наборов, снятых до пересоздания sandbox: `complete` 8/8.
+Для наборов 2026-08-04 и позже — `partial`, пока kanban DB не находятся внутри
+sandbox (причина не в бэкапе, см. docs/audit/backup-versioning-audit-2026-08-04.md).
+
 Ручной прогон и проверка:
 
 ```bash
