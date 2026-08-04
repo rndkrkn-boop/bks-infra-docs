@@ -1,6 +1,7 @@
 stages:
   - docs
   - compliance
+  - backup
 
 # ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
 # Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
@@ -110,3 +111,30 @@ compliance-tests:
     - git config --global user.name "bks ci"
   script:
     - python -m pytest tests/test_compliance_audit.py -q
+
+# ── Тесты движка версионированных бэкапов ─────────────────────────────────
+# Движок ретеншена удаляет данные, поэтому его логика должна проверяться
+# машиной, а не ревьюером: 34 теста покрывают полноту снапшота, GFS-слоты,
+# детект повреждений (sha256 / PRAGMA integrity_check / обход tar) и отказ
+# восстанавливать в production-пути.
+#
+# pytest пиннится намеренно (правило SUP-002): непиннутая зависимость в CI уже
+# роняла lint в bks/memgraphrag (c0eece8).
+backup-tests:
+  stage: backup
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - scripts/backup-manager.py
+        - backup/retention.toml
+        - tests/test_backup_manager.py
+        - .gitlab-ci.yml
+  before_script:
+    - pip install --no-cache-dir pytest==9.0.2
+  script:
+    - python -m pytest tests/test_backup_manager.py -q
+    # Политика обязана разбираться и совпадать с движком: опечатка в
+    # retention.toml иначе всплыла бы только ночью, в 03:00, на живом бэкапе.
+    - python scripts/backup-manager.py --policy backup/retention.toml retention --root /tmp/empty-store

@@ -37,7 +37,7 @@ smoke, fault injection, документация) закрыты живыми д
 | OpenShell sandbox `bks-production` | ready | PASS |
 | Telegram gateways | контракт 3, live-наблюдение 2 supervised programs | **FAIL** |
 | Kanban | liveness `OK`, очереди пусты | E2E/реальное использование не доказаны |
-| Backup | свежесть 18 ч, но последний запуск: 1 ошибка; нет profiles и 5 kanban DB | **FAIL** |
+| Backup | v2: версионированные снапшоты, GFS-ретеншен, машиночитаемый контракт полноты, автоматический restore-drill | PASS (2026-08-04, карточка #8); v1 был **FAIL** — 1 ошибка, нет profiles и 5 kanban DB |
 | Watchdog | 9/9 проверок `OK`, метрики свежие | PASS; backup check проверяет только свежесть |
 | Monitoring | Grafana `:3000`, Prometheus `:9090` слушают | targets/alerts не верифицированы |
 | GitLab/Registry | `:8929`/`:5050` слушают | auth, runners и image digests не верифицированы |
@@ -260,29 +260,41 @@ review и одобрения намеренного изменения baseline.
 
 ## Backup: контракт полноты
 
-Backup запускает `bks-backup.timer` ежедневно в 03:00. Полный набор за дату
-`YYYYMMDD` содержит ровно 8 обязательных непустых артефактов:
+Backup запускает `bks-backup.timer` ежедневно в 03:00. Единица хранения —
+иммутабельный снапшот `/home/admin/backups/bks/snapshots/<YYYYMMDDTHHMMSSZ>/`
+(раскладка и обоснование — `host-infra/backup/README.md`).
 
-1. `kanban-default-YYYYMMDD.db`
-2. `kanban-production-YYYYMMDD.db`
-3. `kanban-marketing-YYYYMMDD.db`
-4. `kanban-research-YYYYMMDD.db`
-5. `kanban-platform-YYYYMMDD.db`
-6. `profiles-YYYYMMDD.tar.gz`
-7. `memgraphrag-data-YYYYMMDD.tar.gz`
-8. `qdrant-YYYYMMDD.tar.gz`
+Полный снапшот содержит ровно 8 обязательных артефактов, перечисленных в
+`backup/retention.toml` (секции `[[artifacts]]`):
 
-Контракт успеха: **все 8 файлов существуют и непусты, итоговая строка содержит
-`Errors: 0`, затем набор проходит изолированный restore/integrity test**.
-Свежесть `.last_backup` или одного архива сама по себе недостаточна.
+1. `kanban-default.db`
+2. `kanban-production.db`
+3. `kanban-marketing.db`
+4. `kanban-research.db`
+5. `kanban-platform.db`
+6. `profiles.tar.gz`
+7. `memgraphrag-data.tar.gz`
+8. `qdrant.tar.gz`
 
-Текущий `bks-backup.sh` снимает live tar каталога Qdrant без snapshot API и
-без остановки контейнера. Такой файл нельзя считать консистентным только по
-наличию и размеру: обязательна изолированная проверка открытия коллекций.
-Целевой фикс — Qdrant snapshot API либо контролируемый backup при остановленном
-контейнере.
+Контракт успеха: **`manifest.json` снапшота содержит `status: "complete"` (то
+есть 8/8 обязательных артефактов не меньше `min_bytes` и `errors: 0`), снапшот
+проходит `verify`, и он же проходит изолированный `restore-drill`.** Свежесть
+`.last_backup` или отдельного архива по-прежнему недостаточна.
 
-Ручной запуск и проверка текущего набора:
+Контракт теперь машиночитаемый, а не только текстовый — состав проверяет
+`scripts/backup-manager.py`, и объявить набор полным скрипт бэкапа не может:
+
+```bash
+python3 /home/admin/servers/backup/backup-manager.py \
+    --policy /home/admin/servers/backup/retention.toml \
+    status --root /home/admin/backups/bks
+```
+
+`status` отвечает не на вопрос «бэкап свежий», а на вопрос «можно ли из этого
+восстановиться»: полнота новейшего снапшота, его возраст и давность последнего
+restore-drill. Код возврата `1` означает содержательную проблему.
+
+Ручной прогон и проверка:
 
 ```bash
 START_EPOCH="$(date +%s)"
@@ -290,41 +302,56 @@ sudo systemctl start bks-backup.service
 journalctl -u bks-backup.service -n 100 --no-pager
 
 BACKUP_DIR=/home/admin/backups/bks
-BACKUP_LOG=/home/admin/servers/backup/backup.log
-DATE="$(date +%Y%m%d)"
-[ "$(stat -c %Y "$BACKUP_LOG")" -ge "$START_EPOCH" ]
-expected=(
-  "kanban-default-${DATE}.db"
-  "kanban-production-${DATE}.db"
-  "kanban-marketing-${DATE}.db"
-  "kanban-research-${DATE}.db"
-  "kanban-platform-${DATE}.db"
-  "profiles-${DATE}.tar.gz"
-  "memgraphrag-data-${DATE}.tar.gz"
-  "qdrant-${DATE}.tar.gz"
-)
-missing=0
-for artifact in "${expected[@]}"; do
-  if [ ! -s "${BACKUP_DIR}/${artifact}" ]; then
-    printf 'MISSING_OR_EMPTY %s\n' "${BACKUP_DIR}/${artifact}" >&2
-    missing=$((missing + 1))
-  fi
-done
-summary="$(grep '=== BKS Backup done\.' \
-  "$BACKUP_LOG" | tail -n 1)"
-printf '%s\n' "$summary"
-case "$summary" in
-  *"Errors: 0."*) ;;
-  *) printf 'BACKUP_ERRORS_NOT_ZERO\n' >&2; exit 1 ;;
-esac
-[ "$missing" -eq 0 ]
-printf 'BACKUP_ARTIFACTS_OK 8/8\n'
+MANAGER=/home/admin/servers/backup/backup-manager.py
+POLICY=/home/admin/servers/backup/retention.toml
+
+# 1. Прогон вообще состоялся (лог тронут после старта)
+[ "$(stat -c %Y /home/admin/servers/backup/backup.log)" -ge "$START_EPOCH" ]
+
+# 2. Новейший снапшот полон: 8/8 и errors=0 (rc=1 при неполном)
+python3 "$MANAGER" --policy "$POLICY" verify --root "$BACKUP_DIR"
+
+# 3. Из него реально восстанавливается (изолированный каталог, не production)
+python3 "$MANAGER" --policy "$POLICY" restore-drill --root "$BACKUP_DIR" --record
+
+# 4. Итоговая пригодность хранилища
+python3 "$MANAGER" --policy "$POLICY" status --root "$BACKUP_DIR"
 ```
 
-На 2026-07-21 этот контракт не выполнен. Исторический isolated restore
-2026-07-09 не подтверждает текущий набор. Не проводить fault injection и не
-восстанавливать поверх production; restore выполняется только в отдельных
-путях/портах по утверждённому тест-плану.
+`bks-backup.service` завершается с кодом 1 при неполном снапшоте, поэтому
+`systemctl status` показывает failed в тот же день. В v1 такой прогон
+отчитывался успехом: `SKIP: board not yet created` не считался ошибкой, и
+2026-08-04 бэкап прошёл при нуле из пяти kanban DB.
+
+Ротация выполняется `backup-manager.py retention --apply` по политике GFS
+(7 дневных / 4 недельных / 6 месячных / 2 годовых слота, `min_keep = 3`).
+Возраст берётся из `snapshot_id`, а не из `mtime`: перезапись файла
+«омолаживала» его и ротация v1 считала возраст неверно. Слот занимает только
+`status: complete`, поэтому битый прогон не вытесняет хороший снапшот того же
+дня. Проверить план без удаления:
+
+```bash
+python3 "$MANAGER" --policy "$POLICY" retention --root "$BACKUP_DIR"   # dry-run
+```
+
+Restore-drill запускается автоматически `bks-backup-drill.timer` (понедельник
+04:30) и пишет отчёты в `/home/admin/backups/bks/drills/`. Drill восстанавливает
+в изолированный каталог и отказывается писать в production-пути
+(`retention.toml`, `drill.forbidden_targets`) — restore поверх production
+остаётся ручной процедурой по утверждённому плану.
+
+Известное ограничение сохраняется: `qdrant.tar.gz` — это
+live tar каталога Qdrant, снятый без snapshot API и без остановки контейнера.
+`verify` и `restore-drill` доказывают, что архив распаковывается, но не
+консистентность коллекций. Целевой фикс — snapshot API либо backup при
+остановленном контейнере.
+
+Проведённые проверки (2026-08-04, карточка architecture-improvements #8):
+миграция реального набора 2026-08-03 в версионированную раскладку дала
+`status: complete` 8/8; `verify` — OK; `restore-drill` на копии восстановил все
+8 артефактов (`integrity_check: ok` на пяти БД, 109 задач в production-доске,
+2534 файла профилей, 1925 файлов Qdrant). Прод-хранилище при этом не
+изменялось: проверка шла на копии в `/tmp`.
 
 ## Watchdog и systemd
 
@@ -340,9 +367,12 @@ tail -n 20 /home/admin/servers/watchdog/metrics.jsonl
 systemctl list-timers --no-pager bks-watchdog.timer bks-backup.timer
 ```
 
-Текущая реализация watchdog проверяет только возраст новейшего backup-файла,
-не 8/8 и не `Errors: 0`. Поэтому `backup_freshness=OK` нельзя использовать
-как заключение о recoverability.
+`backup_freshness` проверяет только возраст новейшего backup-файла, поэтому
+использовать его как заключение о recoverability по-прежнему нельзя. Для этого
+есть отдельная проверка `backup_recoverability`: она спрашивает
+`backup-manager.py status` о полноте новейшего снапшота (8/8) и о давности
+restore-drill. Семантика `backup_freshness` намеренно не менялась — на неё
+ссылаются дашборды и история метрик в Loki.
 
 ## Комплаенс-аудит
 
@@ -405,10 +435,11 @@ GitLab variable values.
 | `/home/admin/servers/memgraphrag/data/` | MemGraphRAG persistent data |
 | `/home/admin/servers/memgraphrag/qdrant/` | Qdrant persistent storage |
 | `/home/admin/servers/watchdog/` | `check.sh`, env, state, `metrics.jsonl` |
-| `/home/admin/servers/backup/` | `bks-backup.sh`, units, `backup.log` |
-| `/home/admin/backups/bks/` | backup artifacts и `.last_backup` |
+| `/home/admin/servers/backup/` | `bks-backup.sh`, `backup-manager.py`, `retention.toml`, units, `backup.log` |
+| `/home/admin/backups/bks/` | `snapshots/<id>/` с `manifest.json`, `latest`, `drills/`, `.last_backup`, `.last_drill` |
 | `/etc/systemd/system/bks-watchdog.{service,timer}` | host watchdog units |
 | `/etc/systemd/system/bks-backup.{service,timer}` | host backup units |
+| `/etc/systemd/system/bks-backup-drill.{service,timer}` | еженедельный restore-drill |
 | `/home/admin/models/adapters/` | router LoRA adapters, read-only mount |
 | `/tmp/supervisord.conf` внутри sandbox | runtime supervisor config; теряется при recreate |
 | `/tmp/supervisor/` внутри sandbox | gateway/supervisor logs |

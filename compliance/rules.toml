@@ -245,7 +245,11 @@ remediation = "Вернуть в DEPLOY.md раздел «Backup: контрак
 [rules.check]
 type = "required_pattern"
 path = "DEPLOY.md"
-pattern = '(?s)8 обязательных.{0,6000}BACKUP_ARTIFACTS_OK'
+# Контракт с 2026-08-04 машиночитаемый: 8 обязательных артефактов перечислены в
+# retention.toml, а признаком успеха служит status "complete" в manifest.json
+# плюс пройденный restore-drill. Проверяем, что DEPLOY.md всё это фиксирует —
+# не имитацию контракта, а именно те три условия.
+pattern = '(?s)8 обязательных артефактов.{0,6000}status.{0,80}complete.{0,4000}restore-drill'
 
 [[rules]]
 id = "BCP-002"
@@ -262,6 +266,48 @@ remediation = "Провести и опубликовать очередной �
 type = "max_age_days"
 glob = "docs/audit/*.md"
 max_age_days = 90
+
+[[rules]]
+id = "BCP-003"
+title = "Бэкапы версионируются, а retention задан декларативно"
+framework = "NFR"
+reference = "NFR-4; ISO 27001 A.8.13; GDPR art.32(1)(c)"
+severity = "high"
+rationale = """
+До 2026-08-04 имя артефакта содержало только дату, поэтому второй прогон за
+сутки затирал первый: 2026-08-04 три запуска подряд перезаписали
+memgraphrag-data-20260804.tar.gz, и вернуться к хорошей копии было некуда.
+Версионирование и срок хранения обязаны существовать как конфигурация, а не как
+предположение о поведении скрипта.
+"""
+remediation = "Вернуть backup/retention.toml с секцией [retention] и составом [[artifacts]]."
+[rules.check]
+type = "required_pattern"
+path = "backup/retention.toml"
+pattern = '(?s)\[retention\].{0,600}min_keep'
+
+[[rules]]
+id = "BCP-004"
+title = "Движок проверки восстановления версионируется вместе с тестами"
+framework = "NFR"
+reference = "ISO 27001 A.8.13 (проверка восстанавливаемости); внутренний регламент аудита"
+severity = "medium"
+rationale = """
+Ручной «ежеквартальный restore-тест» из README подтверждал набор 2026-07-09,
+которого в хранилище давно нет. Проверка, зависящая от того, что человек про неё
+вспомнит, в отчёте выглядит как проверка, но ею не является.
+"""
+remediation = "Вернуть scripts/backup-manager.py и tests/test_backup_manager.py под контроль версий."
+# Юниты (bks-backup-drill.timer/.service) живут в host-infra — отдельном
+# git-репозитории, заигноренном родителем, поэтому paths_tracked по ним измерял
+# бы раскладку репозиториев, а не наличие проверки восстановления. Что drill
+# запускается автоматически, требует BCP-001 через DEPLOY.md.
+[rules.check]
+type = "paths_tracked"
+paths = [
+  "scripts/backup-manager.py",
+  "tests/test_backup_manager.py",
+]
 
 # ── Журналирование ───────────────────────────────────────────────────────────
 
