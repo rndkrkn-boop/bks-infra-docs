@@ -1,0 +1,36 @@
+# bks-compliance.service — регулярный комплаенс-аудит на хосте.
+#
+# Этот юнит был описан в DEPLOY.md как «предусмотрен», но не существовал: в
+# репозитории не было файла, а /etc/systemd/system его не содержал. Метрики
+# bks_compliance_* при этом compliance-report.sh умел писать с самого начала —
+# их просто никто не запускал и никто не читал. Конвейер метрик закрывает вторую
+# половину (node-exporter textfile), этот юнит — первую.
+#
+# CI остаётся гейтом: там нарушение блокирует пайплайн, потому что есть кому
+# чинить. Здесь задача другая — снять метрику, а не уронить unit.
+[Unit]
+Description=BKS compliance audit (metrics only, non-blocking)
+Documentation=file:///home/admin/projects/nemohermes_bks/docs/compliance/README.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/projects/nemohermes_bks
+# См. комментарий про PATH в bks-metrics-bridge.service: та же грабля.
+Environment=PATH=/home/admin/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=COMPLIANCE_OUT_DIR=/home/admin/servers/compliance
+Environment=COMPLIANCE_METRICS_DIR=/var/lib/node_exporter/textfile
+# gate off: цель прогона — метрика, а не блокировка. Нарушение будет видно в
+# bks_compliance_blocking_rules и на дашборде, а не в статусе unit.
+Environment=COMPLIANCE_GATE=off
+ExecStart=/usr/bin/env bash /home/admin/projects/nemohermes_bks/ci/compliance-report.sh
+ReadWritePaths=/var/lib/node_exporter/textfile /home/admin/servers/compliance
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

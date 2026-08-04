@@ -1,0 +1,19 @@
+# bks-metrics-bridge.timer — цикл обновления textfile-метрик.
+#
+# 5 минут — тот же цикл, что у watchdog: чаще нечего обновлять (watchdog сам
+# пишет раз в 5 минут), реже — и bks_metrics_bridge_source_age_seconds начнёт
+# показывать возраст моста, а не возраст данных.
+[Unit]
+Description=Run BKS metrics bridge every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Разброс, чтобы прогон не совпадал секунда-в-секунду с watchdog: иначе мост
+# регулярно читал бы metrics.jsonl в момент дописывания строки.
+RandomizedDelaySec=30
+AccuracySec=30s
+Unit=bks-metrics-bridge.service
+
+[Install]
+WantedBy=timers.target

@@ -216,6 +216,100 @@ Grafana Explore — они не требуют парсера и должны в
 `monitoring/docker-compose.yml`, затем тот же `up -d --remove-orphans`.
 Позиции сохранены в неизменном томе, поэтому откат тоже не даёт дублей.
 
+### Конвейер метрик (агрегация, textfile, федерация)
+
+Разворачивается в три шага, и порядок важен: экспортёр без производителей даст
+пустые метрики, производители без экспортёра — файлы, которые никто не читает.
+Контракты и обоснования — [`docs/metrics/README.md`](./docs/metrics/README.md).
+
+**Шаг 1. Каталог экспозиции (один раз, sudo).** Владелец — хост: в него пишут
+systemd-таймеры, node-exporter только читает.
+
+```bash
+sudo install -d -o admin -g admin -m 0755 /var/lib/node_exporter/textfile
+```
+
+**Шаг 2. Сбор (деплой bks/monitoring).** Штатный `up -d --remove-orphans`
+поднимает node-exporter и подключает правила записи. Федерация — отдельным
+профилем, она опциональна:
+
+```bash
+cd /home/admin/ci/monitoring
+docker compose -p monitoring up -d --remove-orphans
+docker compose -p monitoring restart grafana   # alerting-конфиги копирует entrypoint
+
+# второй этаж (retention 365d, только свёртки bks:*) — по желанию
+docker compose -p monitoring --profile federation up -d
+```
+
+**Шаг 3. Производители (юниты, только вручную).** CI не имеет права править
+`/etc/systemd/system`, поэтому как и остальные `bks-*`:
+
+```bash
+sudo install -m 0644 /home/admin/projects/nemohermes_bks/metrics/systemd/*.service \
+  /home/admin/projects/nemohermes_bks/metrics/systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bks-metrics-bridge.timer bks-compliance.timer
+systemctl list-timers --no-pager bks-metrics-bridge.timer bks-compliance.timer
+```
+
+`bks-compliance.timer` до этого существовал только на бумаге: раздел
+«Комплаенс-аудит» ниже описывал его как предусмотренный, но файла юнита не было
+ни в репозитории, ни на хосте, и метрики `bks_compliance_*` никуда не попадали.
+
+Проверка после деплоя:
+
+```bash
+# 1. Правила записи ЗАГРУЖЕНЫ (валидный конфиг этого не гарантирует:
+#    rule_files можно смонтировать не туда, и Prometheus стартует молча)
+curl -s http://127.0.0.1:9090/api/v1/rules | grep -c '"name":"bks:'
+
+# 2. Правила ДАЛИ серии (загружено != вычислено)
+curl -s -G http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=count(count by (__name__) ({__name__=~"bks:.*"}))'
+
+# 3. Textfile-путь жив: цель node-exporter скрейпится, экспозиция разбирается
+curl -s -G http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=up{job="node-exporter"}'
+curl -s -G http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=bks:textfile_errors:max'    # обязан быть 0
+
+# 4. Производители пакетных метрик на месте (ожидается 2: compliance, metrics_bridge)
+curl -s -G http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=bks:batch_job_age_seconds'
+
+# 5. Федерация (только при включённом профиле): не 0 сэмплов
+curl -s -G http://127.0.0.1:9091/api/v1/query \
+  --data-urlencode 'query=bks:federation_samples:count'
+
+# 6. honor_labels работает: у федерированной серии job СОБСТВЕННЫЙ,
+#    а не bks-federate, и нет лейбла exported_job
+curl -s -G http://127.0.0.1:9091/api/v1/query \
+  --data-urlencode 'query=bks:up:by_job'
+```
+
+Ручной прогон моста (для отладки, ничего не пишет с `--stdout`):
+
+```bash
+python3 scripts/metrics-bridge.py --stdout --source watchdog
+METRICS_OUT_DIR=/tmp/tf bash ci/metrics-bridge.sh   # полный цикл в песочницу
+```
+
+**Что считать нормой сразу после деплоя, а не поломкой:**
+
+- `bks_metrics_bridge_source_ok{source="backup"}` = 0, пока не выполнена
+  однократная миграция хранилища бэкапов в раскладку v2 (`backup-manager status`
+  до неё возвращает rc=2 — см. «Деплой v2» выше);
+- панели роутера пусты, пока через `router:4000` не пройдёт трафик:
+  prometheus_client создаёт дочерние серии счётчика при первом использовании;
+- свёртки `bks:*:increase1d` и `:ratio1d` показывают частичные окна первые сутки.
+
+**Откат.** Убрать `node-exporter` и `prometheus-global` из compose (или просто
+не включать профиль), закомментировать `rule_files` в `prometheus/prometheus.yml`
+и остановить таймеры: `sudo systemctl disable --now bks-metrics-bridge.timer`.
+Данные первого этажа при этом не теряются — правила записи ничего не удаляют,
+они только добавляют серии.
+
 ## Sandbox и gateways
 
 Первичный sandbox создаётся вручную через NemoClaw/OpenShell. Регулярный sync
@@ -486,9 +580,11 @@ COMPLIANCE_METRICS_DIR=/var/lib/node_exporter/textfile \
 
 В CI это джобы `compliance-audit` и `compliance-tests` (stage `compliance`),
 артефакты — `report.json`, `report.md`, `dashboard.html` на 90 дней. На хосте
-предусмотрен таймер `bks-compliance.timer` с `COMPLIANCE_GATE=off`: его работа
-— снять метрику `bks_compliance_*`, а не уронить unit. Блокирует CI, где есть
-кому чинить.
+таймер `bks-compliance.timer` с `COMPLIANCE_GATE=off`: его работа — снять
+метрику `bks_compliance_*`, а не уронить unit. Блокирует CI, где есть кому
+чинить. Юнит лежит в `metrics/systemd/` и ставится вручную (см. «Конвейер
+метрик»); до 2026-08-05 он существовал только в этом абзаце, а метрики писались
+в каталог, который никто не читал.
 
 Grafana-дашборд импортируется из `compliance/grafana-dashboard.json`. Панель
 «Возраст последнего прогона» важнее остальных: автоматизированный комплаенс
@@ -507,7 +603,8 @@ Grafana-дашборд импортируется из `compliance/grafana-dashb
 | MemGraphRAG | `http://192.168.2.180:8010` | sandbox: `http://host.openshell.internal:8010` |
 | Qdrant | `http://qdrant:6333` | только сеть compose `memgraphrag`, host port отсутствует |
 | Grafana | `http://192.168.2.180:3000` | monitoring |
-| Prometheus | `http://192.168.2.180:9090` | monitoring |
+| Prometheus | `http://192.168.2.180:9090` | monitoring, сырьё, retention 30d |
+| Prometheus (federated) | `http://192.168.2.180:9091` | только при профиле `federation`: свёртки `bks:*`, retention 365d |
 | vLLM Qwen3.6 test contour | `http://192.168.2.180:8088/v1` | не основной router tier |
 | Speech-to-text | Router `:4000`, model `whisper` | LiteLLM → `vllm-whisper`; прямой `:10301` декомиссирован |
 
@@ -531,6 +628,9 @@ GitLab variable values.
 | `/etc/systemd/system/bks-watchdog.{service,timer}` | host watchdog units |
 | `/etc/systemd/system/bks-backup.{service,timer}` | host backup units |
 | `/etc/systemd/system/bks-backup-drill.{service,timer}` | еженедельный restore-drill |
+| `/etc/systemd/system/bks-metrics-bridge.{service,timer}` | мост метрик, цикл 5 мин |
+| `/etc/systemd/system/bks-compliance.{service,timer}` | суточный комплаенс-аудит (метрики, без гейта) |
+| `/var/lib/node_exporter/textfile/` | `.prom`-экспозиция задач по таймеру; пишет хост, node-exporter читает |
 | `/home/admin/models/adapters/` | router LoRA adapters, read-only mount |
 | `/tmp/supervisord.conf` внутри sandbox | runtime supervisor config; теряется при recreate |
 | `/tmp/supervisor/` внутри sandbox | gateway/supervisor logs |

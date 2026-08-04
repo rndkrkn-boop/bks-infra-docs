@@ -509,3 +509,62 @@ flowchart LR
     style PIPE  fill:none,stroke:#c2410c,stroke-width:2px
     style TRAIN fill:none,stroke:#6d28d9,stroke-width:2px
 ```
+
+---
+
+## 7 · Metrics Pipeline (агрегация и федерация, с 2026-08-05)
+
+> Три этажа вместо одного скрейпа. Смысл слоя `bks:*` — не «красивые имена», а
+> два конкретных свойства: неограниченно растущие лейблы LiteLLM (`user_agent`,
+> `client_ip`, `hashed_api_key`, `model_id`) не попадают в долгую историю, а
+> выражение живёт в одном месте и проверено юнит-тестами (панель и алерт с
+> копиями одного выражения в этом стеке расходились трижды).
+> Детали и обоснования — ARCHITECTURE.md §2.8, `docs/metrics/README.md`.
+
+```mermaid
+flowchart LR
+    classDef src    fill:#1d4ed8,stroke:#60a5fa,color:#fff,stroke-width:2px
+    classDef batch  fill:#166534,stroke:#4ade80,color:#fff,stroke-width:2px
+    classDef bridge fill:#92400e,stroke:#fbbf24,color:#fff,stroke-width:2px
+    classDef prom   fill:#6d28d9,stroke:#a78bfa,color:#fff,stroke-width:2px
+    classDef rules  fill:#0369a1,stroke:#38bdf8,color:#fff,stroke-width:2px
+    classDef opt    fill:#1e293b,stroke:#94a3b8,color:#e2e8f0,stroke-width:2px,stroke-dasharray:4 3
+    classDef tg     fill:#7f1d1d,stroke:#dc2626,color:#fff,stroke-width:1px
+
+    subgraph SCRAPE["Скрейпится напрямую"]
+        RTR["router :4000\nbks_router_* (tier/provider/profile)"]:::src
+        LLM["litellm :4001\n17 лейблов, часть неограниченных"]:::src
+        VLM["vllm-* :800x\nочередь, KV-cache, latency"]:::src
+        ALY["alloy :12345\nдоставка логов в Loki"]:::src
+        NEX["node-exporter :9100\nхост + textfile collector"]:::src
+    end
+
+    subgraph TIMERS["Скрейпить нельзя: задачи по таймеру"]
+        WDG["watchdog metrics.jsonl\n10 проверок, цикл 5 мин"]:::batch
+        BKP["backup-manager status --json\nполнота и recoverability"]:::batch
+        CMP["compliance-audit.py\nbks_compliance_*.prom"]:::batch
+    end
+
+    BRG["metrics-bridge.py\nsources.toml · атомарная запись\nвозраст из ДАННЫХ, не из mtime"]:::bridge
+    TF[("/var/lib/node_exporter/textfile\n*.prom")]:::bridge
+
+    P1["prometheus :9090\nсырьё, retention 30d"]:::prom
+    AGG["правила записи bks:*\n49 SLI (30s/1m) + 11 свёрток (5m)\nlabel_replace: requested_model → tier"]:::rules
+    P2["prometheus-global :9091\nfederate раз в 60 с\nтолько bks:* и up · retention 365d"]:::opt
+    GRF["grafana :3000\nBKS Metrics Pipeline\n8 алертов конвейера"]:::prom
+    TGA(["✈️ Telegram"]):::tg
+
+    RTR & LLM & VLM & ALY & NEX --> P1
+    WDG & BKP --> BRG
+    BRG --> TF
+    CMP --> TF
+    TF --> NEX
+    P1 --> AGG
+    AGG -->|"honor_labels: true\nиначе job → exported_job молча"| P2
+    AGG --> GRF
+    P2 -.->|"годовой горизонт:\nстоимость · доступность · контекст в облако"| GRF
+    GRF -->|"правила записи упали · мост встал\nэкспозиция битая · федерация молчит"| TGA
+
+    style SCRAPE fill:none,stroke:#1d4ed8,stroke-width:2px
+    style TIMERS fill:none,stroke:#166534,stroke-width:2px
+```

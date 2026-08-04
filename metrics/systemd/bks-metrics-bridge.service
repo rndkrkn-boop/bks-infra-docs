@@ -1,0 +1,42 @@
+# bks-metrics-bridge.service — обновление textfile-метрик конвейера.
+#
+# Ставится вручную (sudo), как и остальные bks-*-юниты: CI не имеет права
+# править /etc/systemd/system. Установка и проверка — см. DEPLOY.md, раздел
+# «Конвейер метрик».
+#
+# Почему таймер, а не контейнер: мост читает файлы ХОСТА
+# (/home/admin/servers/watchdog/metrics.jsonl, хранилище бэкапов) и пишет в
+# каталог, который node-exporter монтирует read-only. Контейнеру для этого
+# понадобились бы те же маунты плюс права на запись — изоляция была бы
+# фиктивной, как и у watchdog (см. ARCHITECTURE.md §2.6).
+[Unit]
+Description=BKS metrics bridge (artefacts -> Prometheus textfile)
+Documentation=file:///home/admin/projects/nemohermes_bks/docs/metrics/README.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/projects/nemohermes_bks
+# PATH задан ЯВНО и это не формальность: unit bks-backup.service без
+# Environment=PATH получал окружение без ~/.local/bin, из-за чего nemohermes не
+# резолвился (exit 127) и шаги бэкапа молча проваливались три недели
+# (см. docs/audit/full-project-audit-2026-07-25.md). Повторять не будем.
+Environment=PATH=/home/admin/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=METRICS_OUT_DIR=/var/lib/node_exporter/textfile
+# strict выключен сознательно: протухший источник обязан быть виден в
+# Prometheus (bks_metrics_bridge_source_stale), а не в цвете unit. Красный unit
+# был бы вторым каналом тревоги об одном и том же инциденте.
+Environment=METRICS_STRICT=off
+ExecStart=/usr/bin/env bash /home/admin/projects/nemohermes_bks/ci/metrics-bridge.sh
+# Каталог экспозиции — единственное, что юнит пишет вне своего WorkingDirectory.
+ReadWritePaths=/var/lib/node_exporter/textfile
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

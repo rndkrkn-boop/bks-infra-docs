@@ -1,0 +1,19 @@
+# bks-compliance.timer — суточный комплаенс-аудит.
+#
+# Раз в сутки, а не чаще: правила проверяют состояние репозитория и документов,
+# которое между коммитами не меняется. Порог алерта на возраст прогона — 36 часов
+# (см. правило Compliance Metrics Stale), то есть один пропущенный запуск ещё не
+# инцидент, два — уже да.
+[Unit]
+Description=Run BKS compliance audit daily
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# После бэкапа (03:00) и не в тот же момент, что drill: аудит читает git и
+# документы, конкуренция за диск ни к чему.
+RandomizedDelaySec=10min
+Persistent=true
+Unit=bks-compliance.service
+
+[Install]
+WantedBy=timers.target

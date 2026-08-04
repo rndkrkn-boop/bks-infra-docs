@@ -2,6 +2,7 @@ stages:
   - docs
   - compliance
   - backup
+  - metrics
 
 # ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
 # Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
@@ -138,3 +139,129 @@ backup-tests:
     # Политика обязана разбираться и совпадать с движком: опечатка в
     # retention.toml иначе всплыла бы только ночью, в 03:00, на живом бэкапе.
     - python scripts/backup-manager.py --policy backup/retention.toml retention --root /tmp/empty-store
+
+
+# ── Конвейер метрик: мост «артефакт по таймеру -> Prometheus» ─────────────
+# Мост читает JSONL/JSON задач, которые нельзя скрейпить (процесса в момент
+# скрейпа уже нет), и раскладывает textfile-экспозицию. Проверять его машиной
+# обязательно: одна неэкранированная кавычка в значении лейбла поднимает
+# node_textfile_scrape_error=1, и node-exporter перестаёт отдавать файл ЦЕЛИКОМ —
+# гаснут все метрики источника сразу, молча и с виду «нормальным» дашбордом.
+#
+# pytest пиннится намеренно (правило SUP-002): непиннутая зависимость в CI уже
+# роняла lint в bks/memgraphrag (c0eece8).
+metrics-tests:
+  stage: metrics
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - scripts/metrics-bridge.py
+        - metrics/**/*
+        - ci/metrics-bridge.sh
+        - tests/test_metrics_bridge.py
+        - .gitlab-ci.yml
+  before_script:
+    - pip install --no-cache-dir pytest==9.0.2
+  script:
+    - python -m pytest tests/test_metrics_bridge.py -q
+    # Каталог источников обязан разбираться и совпадать с движком: опечатка в
+    # sources.toml иначе всплыла бы через пять минут на хосте, пустой панелью.
+    - python scripts/metrics-bridge.py --stdout --source watchdog || true
+    - python -c "import tomllib, pathlib;
+      cfg = tomllib.loads(pathlib.Path('metrics/sources.toml').read_text());
+      names = [s['name'] for s in cfg['source']];
+      print('источников в каталоге:', names);
+      assert len(names) == len(set(names)), 'дубликаты имён источников'"
+
+# ── Экспозиция проверяется родным promtool ────────────────────────────────
+# python-тесты проверяют логику моста, но не соглашения формата: суффикс _total
+# у gauge, единицы измерения (_days вместо _seconds), обязательный перевод строки
+# в конце. Это ловит только promtool, и он уже нашёл две такие ошибки при
+# разработке. Нужен docker, поэтому джоб на shell-раннере.
+metrics-exposition-lint:
+  stage: metrics
+  tags: [gb10-shell]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - scripts/metrics-bridge.py
+        - metrics/**/*
+        - ci/metrics-bridge.sh
+        - .gitlab-ci.yml
+  script:
+    # Версия образа берётся из monitoring/docker-compose.yml, если он рядом,
+    # иначе фиксированная: валидатор не должен разъезжаться с прод-Prometheus.
+    - PROM_IMAGE=prom/prometheus:v3.4.1
+    - out=$(mktemp -d)
+    # Синтетический источник: CI не имеет доступа к /home/admin/servers.
+    # Во втором значении check намеренно есть кавычка: сломанное экранирование
+    # поймает promtool ниже, а не пустая панель через месяц.
+    - |
+      cat > "$out/fixture.jsonl" <<JSONL
+      {"ts_ms": 1785858371351, "check": "disk_space", "status": "ok", "detail": "disk 16%"}
+      {"ts_ms": 1785858371411, "check": "gpu \" в кавычках", "status": "fail"}
+      JSONL
+    - |
+      cat > "$out/sources.toml" <<TOML
+      [defaults]
+      out_dir = "$out"
+
+      [[source]]
+      name = "fixture"
+      kind = "jsonl_last_by_key"
+      path = "$out/fixture.jsonl"
+      out = "bks_fixture.prom"
+      metric_prefix = "bks_watchdog"
+      timestamp_field = "ts_ms"
+      timestamp_unit = "ms"
+      TOML
+    - python3 scripts/metrics-bridge.py --config "$out/sources.toml" --out-dir "$out"
+    - |
+      for f in "$out"/*.prom; do
+        echo "--- $f"
+        docker run --rm -i --entrypoint promtool "$PROM_IMAGE" check metrics < "$f"
+      done
+    - rm -rf "$out"
+
+# ── Скрипты конвейера проходят shellcheck ─────────────────────────────────
+metrics-shellcheck:
+  stage: metrics
+  # Тег пиннится намеренно: правило комплаенса SUP-001 запрещает плавающие теги
+  # образов в CI, и джоб обязан соблюдать собственные правила репозитория.
+  image: koalaman/shellcheck-alpine:v0.11.0
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - ci/metrics-bridge.sh
+        - .gitlab-ci.yml
+  script:
+    - shellcheck ci/metrics-bridge.sh
+
+# ── Юниты конвейера разбираются systemd ───────────────────────────────────
+# Юниты ставятся руками (sudo), поэтому опечатка в них не всплывает до момента,
+# когда кто-то будет разбираться, почему метрики не обновляются. systemd-analyze
+# verify стоит дешевле этого разбирательства.
+metrics-units-verify:
+  stage: metrics
+  tags: [gb10-shell]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - metrics/systemd/**/*
+        - .gitlab-ci.yml
+  script:
+    # systemd-analyze verify возвращает 0 и при отсутствии части ссылок на чужие
+    # юниты хоста, поэтому дополнительно ловим сообщения о собственных файлах.
+    - |
+      output=$(systemd-analyze verify metrics/systemd/* 2>&1 || true)
+      echo "$output"
+      if echo "$output" | grep -E 'bks-(metrics-bridge|compliance)\.(service|timer)'; then
+        echo "systemd нашёл проблемы в юнитах конвейера" >&2
+        exit 1
+      fi
+      echo "юниты разбираются без замечаний"

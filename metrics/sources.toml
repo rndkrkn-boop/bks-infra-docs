@@ -1,0 +1,123 @@
+# sources.toml — каталог источников конвейера метрик.
+#
+# Здесь описано, ЧТО подключено к Prometheus через textfile collector. Движок —
+# scripts/metrics-bridge.py, и он про эти источники ничего не знает: добавление
+# нового — правка этого файла, а не кода. Тот же контракт, что у
+# compliance/rules.toml и backup/retention.toml.
+#
+# Кто читает результат: node-exporter (сервис monitoring-node-exporter,
+# --collector.textfile.directory) -> Prometheus job node-exporter -> правила
+# записи bks:batch_job_age_seconds и далее федерация.
+#
+# ВАЖНО про имена метрик: правила записи в bks/monitoring ссылаются на
+# конкретные имена (bks_watchdog_check_status, bks_backup_recoverable,
+# bks_compliance_last_run_timestamp_seconds). Переименование metric_prefix или
+# поля здесь молча обнулит соответствующие панели и алерты — менять только
+# вместе с prometheus/rules/bks-aggregation.yml.
+
+[defaults]
+# Каталог, который монтируется в node-exporter read-only. Владелец — хост
+# (в него пишут systemd-таймеры), не docker-volume.
+out_dir = "/var/lib/node_exporter/textfile"
+
+# ── watchdog: результаты проверок хоста ─────────────────────────────────────
+# История проверок и так уезжает в Loki через alloy. Здесь нужен ДРУГОЙ разрез:
+# текущее состояние как число, которое можно сложить с остальными метриками,
+# сравнить с трафиком роутера на одной панели и хранить год в свёртках.
+#
+# Алертов по этим метрикам сознательно НЕТ: первичная тревога по проверкам —
+# у самого watchdog (свой Telegram-канал), молчание watchdog сторожит правило
+# Watchdog Silent по Loki. Один инцидент — один канал.
+[[source]]
+name = "watchdog"
+kind = "jsonl_last_by_key"
+path = "/home/admin/servers/watchdog/metrics.jsonl"
+out = "bks_watchdog.prom"
+metric_prefix = "bks_watchdog"
+# Ключ, по которому берётся последняя запись: одна проверка — одна серия.
+key = "check"
+status_field = "status"
+status_ok_values = ["ok"]
+# ts_ms в записи — время самой проверки. Использовать mtime файла нельзя:
+# он обновляется при дописывании ЛЮБОЙ строки, поэтому одна живая проверка
+# маскировала бы девять умерших.
+timestamp_field = "ts_ms"
+timestamp_unit = "ms"
+# Цикл watchdog — 5 минут. 20 минут = три пропущенных прогона, тот же порог,
+# что у dead-man правила в Grafana (сознательно одинаковый).
+max_age_seconds = 1200
+# metrics.jsonl — 4+ МБ, самозачистка через mv при 5 МБ. 256 КиБ хвоста с
+# запасом покрывают последний прогон всех проверок.
+tail_bytes = 262144
+
+# ── backup: пригодность хранилища к восстановлению ──────────────────────────
+# Источник JSON готовит сам backup-manager.py (status --json) — он единственный
+# знает, что такое «полный снапшот» и «свежий restore-drill». Мост не повторяет
+# эту логику, иначе появилось бы второе определение полноты бэкапа, и однажды
+# они разошлись бы.
+#
+# Файла может не быть (хранилище ещё в плоской раскладке v1 до однократной
+# миграции) — это не ошибка: bks_metrics_bridge_source_ok уйдёт нулём и будет
+# видно на дашборде.
+[[source]]
+name = "backup"
+kind = "json_gauges"
+# Путь относительный — значит «в out_dir». Сводку готовит ci/metrics-bridge.sh
+# и кладёт туда же, поэтому переопределение METRICS_OUT_DIR работает целиком, а
+# не наполовину.
+path = "backup-status.json"
+out = "bks_backup.prom"
+metric_prefix = "bks_backup"
+timestamp_field = "evaluated_at"
+# Бэкап раз в сутки в 03:00 + запас на RandomizedDelaySec и пропуск запуска.
+max_age_seconds = 108000
+
+[[source.field]]
+json = "ok"
+metric = "recoverable"
+help = "Из хранилища можно восстановиться сегодня: 1=да, 0=нет."
+
+[[source.field]]
+json = "snapshots"
+metric = "snapshots"
+help = "Всего снапшотов в хранилище."
+
+[[source.field]]
+json = "complete"
+metric = "snapshots_complete"
+help = "Снапшотов с полным набором обязательных артефактов."
+
+[[source.field]]
+json = "partial"
+metric = "snapshots_partial"
+help = "Снапшотов с неполным набором артефактов."
+
+[[source.field]]
+json = "failed"
+metric = "snapshots_failed"
+help = "Снапшотов со статусом failed."
+
+# scale = 86400: backup-manager отдаёт возраст в сутках (так удобнее человеку),
+# а экспозиция обязана быть в базовых единицах — секундах. promtool check metrics
+# проверяет это правило, и суффикс _days он не пропускает.
+[[source.field]]
+json = "latest_complete_age_days"
+metric = "latest_complete_age_seconds"
+scale = 86400
+help = "Возраст свежайшего полного снапшота."
+
+[[source.field]]
+json = "last_drill_age_days"
+metric = "last_drill_age_seconds"
+scale = 86400
+help = "Давность последнего restore-drill."
+
+[[source.field]]
+json = "total_bytes"
+metric = "size_bytes"
+help = "Суммарный размер хранилища бэкапов."
+
+[[source.field]]
+json = "retention_would_delete"
+metric = "retention_would_delete"
+help = "Сколько снапшотов удалит политика хранения при следующем применении."
