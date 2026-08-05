@@ -11,11 +11,26 @@ set -euo pipefail
 # процессе, интерактивный шелл и остальные инструменты не затрагиваются.
 unset ANTHROPIC_API_KEY
 
+# --no-auto-verify: для daily-cycle-orchestrator.sh, который сам вызывает
+# daily-verify.sh отдельным шагом (Telegram-уведомления по фазам) — без флага
+# оркестратор получил бы верификацию и коммит дважды подряд.
+AUTO_VERIFY=1
+for ARG in "$@"; do
+    case "$ARG" in
+        --no-auto-verify) AUTO_VERIFY=0 ;;
+    esac
+done
+
 PROJECT_DIR="/home/admin/projects/nemohermes_bks"
 AUDIT_DIR="$PROJECT_DIR/audits"
 KANBAN_DIR="$PROJECT_DIR/kanban"
 REPORT_DATE=$(date +%Y-%m-%d)
-APPROVAL_FILE="$AUDIT_DIR/$REPORT_DATE-approval.json"
+# Вне репозитория намеренно (AUDIT-005) — approval-файл не должен быть
+# редактируемым тем же коммитом, который он одобряет. Тот же путь, что
+# daily-audit.sh печатает пользователю и создаёт с правами 0700.
+APPROVAL_DIR="${APPROVAL_DIR:-/home/admin/approvals}"
+APPROVAL_FILE="$APPROVAL_DIR/$REPORT_DATE-approval.json"
+REPORT_FILE="$AUDIT_DIR/$REPORT_DATE-audit-report.json"
 KANBAN_FILE="$KANBAN_DIR/$REPORT_DATE-kanban.json"
 LOG_FILE="$AUDIT_DIR/$REPORT_DATE-implementation.log"
 
@@ -28,7 +43,21 @@ mkdir -p "$AUDIT_DIR" "$KANBAN_DIR"
     echo "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "Approval file: $APPROVAL_FILE"
     echo
-    
+
+    # ============ STEP 0: Verify Approval (AUDIT-005 gate) ============
+    # Единственная проверка, что реализация вообще может начаться: схема +
+    # HMAC-подпись + сверка approved_issue_ids с сегодняшним отчётом аудита.
+    # Раньше этот файл читался напрямую безо всякой аутентификации — ровно та
+    # дыра, которую AUDIT-005 был должен закрыть, но фактически закрыл только
+    # со стороны генерации (daily-audit.sh), не здесь, в точке потребления.
+    echo "🔐 Step 0: Verifying approval file (schema + HMAC + audit-report cross-check)..."
+    if ! bash "$PROJECT_DIR/ci/verify-approval.sh" "$APPROVAL_FILE" "$REPORT_FILE"; then
+        echo "❌ Approval verification failed — реализация не начнётся" >&2
+        exit 1
+    fi
+    echo "✅ Approval verified"
+    echo
+
     # ============ STEP 1: Parse Approval & Create Kanban ============
     echo "📋 Step 1: Creating Kanban board from approved issues..."
     echo
@@ -145,9 +174,13 @@ PROMPT_EOF
     echo
     
     # ============ STEP 4: Auto-run verification ============
-    echo "🧪 Running verification & commit..."
-    echo
-    
-    bash "$PROJECT_DIR/scripts/daily-verify-and-commit.sh"
+    if [ "$AUTO_VERIFY" -eq 1 ]; then
+        echo "🧪 Running verification & commit..."
+        echo
+
+        bash "$PROJECT_DIR/scripts/daily-verify-and-commit.sh"
+    else
+        echo "⏭️  --no-auto-verify: пропускаю verify-and-commit, вызовет вызывающий скрипт"
+    fi
     
 } | tee -a "$LOG_FILE"

@@ -42,7 +42,12 @@ audit_phase() {
 wait_approval_phase() {
     log "⏳ PHASE 2: WAITING FOR APPROVAL"
     
-    APPROVAL_FILE="$AUDIT_DIR/$REPORT_DATE-approval.json"
+    # Тот же путь, что daily-audit.sh печатает пользователю и daily-implement-now.sh
+    # проверяет (AUDIT-005) — раньше здесь была независимая копия старого,
+    # in-repo пути, и approval, положенный туда, куда просил daily-audit.sh,
+    # эта проверка никогда бы не увидела.
+    APPROVAL_DIR="${APPROVAL_DIR:-/home/admin/approvals}"
+    APPROVAL_FILE="$APPROVAL_DIR/$REPORT_DATE-approval.json"
     MAX_WAIT=25200  # 7 hours
     ELAPSED=0
     INTERVAL=300    # Check every 5 minutes
