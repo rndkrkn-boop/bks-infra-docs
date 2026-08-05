@@ -1,0 +1,3 @@
+bks cosign supply-chain selftest artifact.
+Заменяется скриптом scripts/cosign-selftest.sh, чтобы «подписанный» и
+«неподписанный» варианты образа имели разные digest'ы.

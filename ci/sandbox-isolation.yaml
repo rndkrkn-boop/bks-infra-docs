@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  sandbox-app:
+    image: nemohermes:latest
+    container_name: sandbox-isolation-test
+    
+    # Security: Drop all capabilities
+    cap_drop:
+      - ALL
+    
+    # Security: Only add specific capabilities if needed
+    cap_add:
+      - NET_BIND_SERVICE  # Only if app needs to bind ports
+    
+    # Security: Read-only root filesystem
+    read_only: true
+    
+    # Security: No privilege escalation
+    security_opt:
+      - no-new-privileges:true
+    
+    # Security: User context (not root)
+    user: "1000:1000"
+    
+    # Security: Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Logging: Minimize info leakage
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Volumes: Minimal mounts
+    volumes:
+      - /tmp  # Writable temp only
+    
+    # Networking: No host network access
+    network_mode: bridge
+    
+    # Security: Restart policy (avoid infinite restart loops)
+    restart_policy:
+      condition: on-failure
+      max_attempts: 3
+      delay: 5s

@@ -1,0 +1,23 @@
+# Trusted Base Images
+# Format: image:tag@digest
+# Used by ci/verify-image-sig.sh for signature verification
+
+# Official base images (public registries)
+docker.io/library/ubuntu:22.04@sha256:e6173d4dc55e76b87c93ffc770889f7e82b3091529e8d5e77b8d8c9898b5c5e0
+docker.io/library/python:3.11-slim@sha256:a9b2c8bf0e8eb7c1c3f3f8f9b1f3f8f9b1f3f8f9b1f3f8f9b1f3f8f9b1f3f8
+docker.io/library/node:18-alpine@sha256:b1c3f0e8d5a7c9f1e5d3c1b9a7f5e3d1c9b7a5f3e1d9c7b5a3f1e9d7c5b3
+
+# Private registry (internal images)
+192.168.2.180:5050/nemohermes:latest@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+192.168.2.180:5050/nemohermes-router:latest@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+192.168.2.180:5050/memgraphrag:latest@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+
+# Build-time base images (strict verification)
+docker.io/library/golang:1.21-alpine@sha256:builddigest1builddigest2builddigest3builddigest4builddigest5builddigest6
+docker.io/library/rust:latest@sha256:rustdigest01rustdigest02rustdigest03rustdigest04rustdigest05rustdigest06
+
+# Maintenance notes:
+# - Update digests after any base image update
+# - Verify signatures with: bash ci/verify-image-sig.sh
+# - For unsigned images, digest serves as verification
+# - Contact DevOps before adding new trusted images

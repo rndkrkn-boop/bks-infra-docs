@@ -1,0 +1,84 @@
+# Quality Gates Configuration
+# Defines acceptance criteria for deployments across all environments
+
+gates:
+  # Critical: Must pass in ALL environments
+  critical:
+    - name: "docker-build-success"
+      condition: "build_exit_code == 0"
+      message: "Docker image must build without errors"
+      environments: ["dev", "test", "canary", "prod"]
+      required: true
+
+    - name: "security-scan-pass"
+      condition: "trivy_severity_critical == 0"
+      message: "No critical vulnerabilities allowed"
+      environments: ["dev", "test", "canary", "prod"]
+      required: true
+
+    - name: "unit-tests-coverage"
+      condition: "coverage_percent >= 75"
+      message: "Minimum 75% code coverage required"
+      environments: ["dev", "test", "canary"]
+      required: true
+
+  # High: Must pass in test+canary+prod
+  high:
+    - name: "integration-tests-pass"
+      condition: "integration_tests_passed > 0"
+      message: "Integration tests must pass"
+      environments: ["test", "canary", "prod"]
+      required: true
+
+    - name: "helm-lint"
+      condition: "helm_lint_errors == 0"
+      message: "Helm chart must be valid"
+      environments: ["test", "canary", "prod"]
+      required: true
+
+    - name: "performance-regression"
+      condition: "latency_p95_ms <= baseline * 1.1"
+      message: "Latency must not degrade >10% from baseline"
+      environments: ["canary", "prod"]
+      required: false  # Warning only
+
+  # Medium: DEV environment only
+  dev:
+    - name: "code-style"
+      condition: "lint_warnings < 50"
+      message: "Code style violations < 50"
+      environments: ["dev"]
+      required: false
+
+# Fail-open detection rules
+# Monitors for gates that silently pass when they should fail
+fail_open_detection:
+  enabled: true
+  check_interval_seconds: 60
+  
+  rules:
+    - name: "build-gate-bypass"
+      monitor: "docker-build-success"
+      condition: "gate_marked_pass_but_build_log_contains_error"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+    - name: "test-gate-bypass"
+      monitor: "integration-tests-pass"
+      condition: "gate_marked_pass_but_test_count == 0"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+    - name: "security-scan-bypass"
+      monitor: "security-scan-pass"
+      condition: "gate_marked_pass_but_scan_not_executed"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+# Rollback conditions
+# Automatically revert if gates fail in production
+rollback:
+  enabled: true
+  condition: "failed_critical_gates >= 2"
+  grace_period_seconds: 300
+  max_rollbacks_per_hour: 2
