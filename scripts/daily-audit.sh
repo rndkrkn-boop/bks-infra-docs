@@ -22,6 +22,10 @@ set -euo pipefail
 # но этот скрипт тогда остался незамеченным — вне области того аудита.
 unset ANTHROPIC_API_KEY
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/claude-rate-limit-lib.sh
+. "$SCRIPT_DIR/claude-rate-limit-lib.sh"
+
 PROJECT_DIR="/home/admin/projects/nemohermes_bks"
 AUDIT_DIR="$PROJECT_DIR/audits"
 REPORT_DATE=$(date +%Y-%m-%d)
@@ -128,13 +132,30 @@ cd "$PROJECT_DIR"
 # stdout и stderr идут в разные потоки: stdout — кандидат в отчёт, stderr —
 # диагностика в отдельный файл. Код возврата проверяется явно ($CLAUDE_EXIT),
 # без '||' — иначе таймаут/ошибка Claude маскируются под валидный пустой отчёт.
+#
+# Ретрай на лимите подписки: без ANTHROPIC_API_KEY единственный источник
+# инференса — claude.ai-подписка, и её лимит — не ошибка, а повод подождать
+# и повторить тот же запрос, а не проваливать аудит на весь день.
 set +e
-AUDIT_REPORT=$(timeout 1800 claude -p "$AUDIT_CONTEXT" \
-    --add-dir "$PROJECT_DIR" \
-    --allowedTools "Read,Grep,Glob" \
-    --disallowedTools "$DISALLOWED" \
-    --max-turns 40 2>"$STDERR_FILE")
-CLAUDE_EXIT=$?
+ATTEMPT=1
+while :; do
+    AUDIT_REPORT=$(timeout 1800 claude -p "$AUDIT_CONTEXT" \
+        --add-dir "$PROJECT_DIR" \
+        --allowedTools "Read,Grep,Glob" \
+        --disallowedTools "$DISALLOWED" \
+        --max-turns 40 2>"$STDERR_FILE")
+    CLAUDE_EXIT=$?
+    if [ "$CLAUDE_EXIT" -eq 0 ]; then
+        break
+    fi
+    if claude_should_retry "$ATTEMPT" "$(cat "$STDERR_FILE" 2>/dev/null)"; then
+        echo "⏳ Похоже на исчерпанный лимит подписки claude.ai (попытка $ATTEMPT/$CLAUDE_RATE_LIMIT_MAX_ATTEMPTS) — жду ${CLAUDE_RATE_LIMIT_WAIT_SECONDS}s и повторяю тот же запрос" >&2
+        sleep "$CLAUDE_RATE_LIMIT_WAIT_SECONDS"
+        ATTEMPT=$((ATTEMPT + 1))
+        continue
+    fi
+    break
+done
 set -e
 
 if [ -s "$STDERR_FILE" ]; then

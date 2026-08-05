@@ -11,6 +11,10 @@ set -euo pipefail
 # процессе, интерактивный шелл и остальные инструменты не затрагиваются.
 unset ANTHROPIC_API_KEY
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/claude-rate-limit-lib.sh
+. "$SCRIPT_DIR/claude-rate-limit-lib.sh"
+
 # --no-auto-verify: для daily-cycle-orchestrator.sh, который сам вызывает
 # daily-verify.sh отдельным шагом (Telegram-уведомления по фазам) — без флага
 # оркестратор получил бы верификацию и коммит дважды подряд.
@@ -144,10 +148,28 @@ PROMPT_EOF
         # цикла (`done < <(jq ...)`), может частично вычитать из него, и внешний
         # `read -r ISSUE` получает EOF после первой же итерации: реально
         # обрабатывалась 1 задача из 10, хотя канбан создавался на все 10.
-        if timeout 600 claude -p "$CLAUDE_PROMPT" \
-            --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*)" \
-            --max-turns 20 < /dev/null >> "$LOG_FILE" 2>&1; then
-            
+        TASK_ATTEMPT=1
+        TASK_RC=1
+        while :; do
+            if timeout 600 claude -p "$CLAUDE_PROMPT" \
+                --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*)" \
+                --max-turns 20 < /dev/null >> "$LOG_FILE" 2>&1; then
+                TASK_RC=0
+                break
+            fi
+            # Проверяем только хвост лога (этот запуск), а не файл целиком —
+            # иначе совпадение из давно прошедшей задачи запустило бы ретрай
+            # для текущей.
+            if claude_should_retry "$TASK_ATTEMPT" "$(tail -c 4000 "$LOG_FILE")"; then
+                echo "⏳ Похоже на исчерпанный лимит подписки claude.ai (попытка $TASK_ATTEMPT/$CLAUDE_RATE_LIMIT_MAX_ATTEMPTS) — жду ${CLAUDE_RATE_LIMIT_WAIT_SECONDS}s и повторяю ту же задачу" >> "$LOG_FILE"
+                sleep "$CLAUDE_RATE_LIMIT_WAIT_SECONDS"
+                TASK_ATTEMPT=$((TASK_ATTEMPT + 1))
+                continue
+            fi
+            break
+        done
+
+        if [ "$TASK_RC" -eq 0 ]; then
             echo "✅ Task $TASK_NUM completed"
             COMPLETED=$((COMPLETED + 1))
         else

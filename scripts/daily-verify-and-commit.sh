@@ -8,6 +8,10 @@ set -euo pipefail
 # у claude -p ниже (платный API вместо аккаунта) — unset влияет только на этот процесс.
 unset ANTHROPIC_API_KEY
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/claude-rate-limit-lib.sh
+. "$SCRIPT_DIR/claude-rate-limit-lib.sh"
+
 # Переопределяемо через окружение — иначе гейт автокоммита невозможно прогнать
 # в тесте на одноразовом репозитории, только на живом рабочем дереве.
 PROJECT_DIR="${PROJECT_DIR:-/home/admin/projects/nemohermes_bks}"
@@ -132,10 +136,23 @@ Format: {\"status\": \"healthy|at_risk\", \"issues\": [], \"ready_to_commit\": t
     set +e
     # Промпт выше явно просит "run: git status" / "git ls-tree" — без Bash-доступа
     # к этим двум командам верификация не могла даже прочитать состояние репо.
-    VERIFICATION=$(timeout 300 claude -p "$VERIFY_PROMPT" \
-      --allowedTools "Read,Bash(git status:*),Bash(git ls-tree:*),Bash(git log:*),Bash(git diff:*)" \
-      --max-turns 15 2>"$VERIFY_STDERR")
-    CLAUDE_EXIT=$?
+    VERIFY_ATTEMPT=1
+    while :; do
+        VERIFICATION=$(timeout 300 claude -p "$VERIFY_PROMPT" \
+          --allowedTools "Read,Bash(git status:*),Bash(git ls-tree:*),Bash(git log:*),Bash(git diff:*)" \
+          --max-turns 15 2>"$VERIFY_STDERR")
+        CLAUDE_EXIT=$?
+        if [ "$CLAUDE_EXIT" -eq 0 ]; then
+            break
+        fi
+        if claude_should_retry "$VERIFY_ATTEMPT" "$(cat "$VERIFY_STDERR" 2>/dev/null)"; then
+            echo "  ⏳ Похоже на исчерпанный лимит подписки claude.ai (попытка $VERIFY_ATTEMPT/$CLAUDE_RATE_LIMIT_MAX_ATTEMPTS) — жду ${CLAUDE_RATE_LIMIT_WAIT_SECONDS}s и повторяю"
+            sleep "$CLAUDE_RATE_LIMIT_WAIT_SECONDS"
+            VERIFY_ATTEMPT=$((VERIFY_ATTEMPT + 1))
+            continue
+        fi
+        break
+    done
     set -e
 
     if [ -s "$VERIFY_STDERR" ]; then
