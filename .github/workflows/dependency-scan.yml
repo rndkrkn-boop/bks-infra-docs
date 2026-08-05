@@ -1,0 +1,66 @@
+name: Dependency Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  scan-python:
+    runs-on: ubuntu-latest
+    name: Python Dependency Audit
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run pip audit
+        run: pip-audit
+      
+      - name: Generate SBOM (pip)
+        if: always()
+        run: pip list --format=json > pip-sbom.json || true
+      
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-sbom
+          path: pip-sbom.json
+
+  report:
+    runs-on: ubuntu-latest
+    name: Consolidate Scan Results
+    needs: [ scan-python ]
+    if: always()
+
+    steps:
+      - name: Download SBOMs
+        uses: actions/download-artifact@v4
+
+      - name: Generate report
+        run: |
+          echo "# Dependency Scan Report" > scan-report.md
+          echo "Date: $(date)" >> scan-report.md
+          echo "" >> scan-report.md
+          echo "## pip Audit" >> scan-report.md
+          cat pip-sbom/pip-sbom.json >> scan-report.md || echo "No pip data" >> scan-report.md
+      
+      - name: Upload final report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-scan-report
+          path: scan-report.md
