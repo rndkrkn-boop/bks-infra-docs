@@ -1,125 +1,114 @@
 # Daily Audit & Improvement Cycle
 
-Automated daily workflow that audits `nemohermes_bks` project, proposes improvements, waits for user approval, implements changes via Claude, and auto-commits if tests pass.
+Automated daily workflow that audits `nemohermes_bks`, proposes improvements,
+waits for your signed approval, implements changes via Claude, and
+auto-commits if tests pass.
 
-## 📅 Schedule
+> Ранее существовало два независимых README (`DAILY-AUDIT-README.md` для
+> расписания 10:00/18:00/20:00 и `DAILY-AUDIT-README-NEW.md` для немедленного
+> флоу) — они разошлись и оба описывали approval-файл по устаревшему пути без
+> подписи. Сведены в один документ 2026-08-06.
+
+## 🚀 Two entrypoints, one approval format
+
+Обе точки входа читают один и тот же подписанный approval-файл
+(`schemas/approval.schema.json` + HMAC, см. ниже) и вызывают один и тот же
+canonical `daily-implement-now.sh` — отличается только то, как запускается
+реализация после одобрения.
+
+| | Immediate (по умолчанию) | Fixed-schedule (legacy) |
+|---|---|---|
+| Cron | 1 джоба: `daily-audit-and-wait.sh` в 10:00 | 3 джобы: `daily-cycle-orchestrator.sh` на audit/implement/verify |
+| После approve | Реализация стартует **сразу** | Ждёт следующей фазы оркестратора |
+| Entry script | `scripts/daily-audit-and-wait.sh` → `scripts/daily-implement-now.sh` | `scripts/daily-cycle-orchestrator.sh` → `scripts/daily-implement.sh` (тонкая обёртка над `daily-implement-now.sh --no-auto-verify`) → `scripts/daily-verify.sh` |
+
+Если не уверены, какой у вас настроен — immediate проще и это то, что
+реально тестировалось сегодня; fixed-schedule сохранён для Telegram-уведомлений
+по фазам через `daily-cycle-orchestrator.sh`.
+
+## 📅 Schedule (immediate flow)
 
 | Time | Phase | Action | Output |
 |------|-------|--------|--------|
-| **10:00 AM** | Audit | Claude analyzes code, security, tests, docs | `audits/YYYY-MM-DD-audit-report.json` |
-| **10:00-17:00** | Approval | You review and approve improvements | `audits/YYYY-MM-DD-approval.json` |
-| **18:00 PM** | Implement | Sequential Claude loop fixes issues | `audits/YYYY-MM-DD-implementation.log` |
-| **20:00 PM** | Verify | Tests + security checks + auto-commit | Git commit or failure alert |
-
-## 🚀 Getting Started
-
-### Step 1: Verify Scripts Exist
-```bash
-ls -la /home/admin/projects/nemohermes_bks/scripts/
-# Should see:
-# - daily-audit.sh
-# - daily-implement.sh
-# - daily-verify.sh
-# - daily-cycle-orchestrator.sh
-```
-
-### Step 2: Verify Cron Jobs Are Active
-```bash
-hermes cron list | grep daily
-# Should see:
-# daily-audit-10am      ← 10:00 AM every day
-# daily-implement-6pm   ← 18:00 PM every day (after approval)
-# daily-verify-8pm      ← 20:00 PM every day (after implementation)
-```
-
-### Step 3: Wait for First Audit (10:00 AM)
-At 10:00 AM, you'll receive a message with the audit report:
-```
-🔍 Daily audit complete. Review report and approve improvements.
-Report: /home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-audit-report.json
-```
+| **10:00** | Audit | Claude анализирует код, безопасность, тесты, доки | `audits/YYYY-MM-DD-audit-report.json` |
+| **anytime after** | Approval | Вы создаёте и подписываете approval-файл | `/home/admin/approvals/YYYY-MM-DD-approval.json` |
+| **immediately after approval** | Implement | Sequential Claude loop реализует задачи, тестирует каждую | `audits/YYYY-MM-DD-implementation.log` |
+| **immediately after implement** | Verify | Тесты + ruff + security + auto-commit | Git commit или отказ с причиной |
 
 ## 👤 User Workflow
 
-### Phase 1: Receive Audit Report (10:00 AM)
-Hermes sends you the audit report with all findings:
-```json
-{
-  "audit_date": "2026-08-05",
-  "total_issues": 12,
-  "by_priority": {
-    "CRITICAL": 3,
-    "HIGH": 4,
-    "MEDIUM": 3,
-    "LOW": 2
-  },
-  "issues": [
-    {
-      "id": "AUDIT-001",
-      "priority": "CRITICAL",
-      "title": "Missing connection pooling",
-      "description": "...",
-      "effort": "MEDIUM"
-    },
-    ...
-  ]
-}
+### Phase 1: Audit report
+```bash
+cat audits/$(date +%Y-%m-%d)-audit-report.json | jq '.issues'
 ```
 
-### Phase 2: Review & Approve (10:00 AM - 17:00 PM)
+### Phase 2: Approve — schema + HMAC signature required
 
-**Option A: Approve Selected Issues**
+Файл одобрения **не в репозитории** (AUDIT-005: агент не может быть тем
+единственным, кто и предлагает, и одобряет изменение в своей собственной
+истории). `daily-implement-now.sh` вызывает `ci/verify-approval.sh` ДО
+единой строчки реализации и откажет, если:
+- файл не проходит `schemas/approval.schema.json`,
+- HMAC-подпись не совпадает (ключ `APPROVAL_HMAC_KEY` — GitLab CI Variable,
+  локально тот же ключ в `~/.bashrc`),
+- любой `approved_issue_ids` отсутствует в отчёте аудита того же дня.
 
-Create this file to approve specific issues:
 ```bash
-cat > /home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-approval.json << 'EOF'
+mkdir -p /home/admin/approvals
+cat > /home/admin/approvals/$(date +%Y-%m-%d)-approval.json << 'EOF'
 {
-  "approved_issue_ids": ["AUDIT-001", "AUDIT-003", "AUDIT-005"],
+  "approval_date": "2026-08-06",
+  "approved_issue_ids": ["AUDIT-001", "AUDIT-003"],
   "approved_issues": [
     {
       "id": "AUDIT-001",
       "priority": "CRITICAL",
       "title": "Add connection pooling",
-      "implementation": "Setup pgbouncer with 50 connection pool. Create ci/pgbouncer.conf..."
+      "implementation": "Setup pgbouncer with 50 connection pool..."
     },
     {
       "id": "AUDIT-003",
       "priority": "HIGH",
       "title": "Add missing unit tests",
-      "implementation": "Create tests/auth.test.js with 80%+ coverage..."
+      "implementation": "Create tests/auth_test.py with 80%+ coverage..."
     }
-  ],
-  "notes": "Focus on CRITICAL issues this week"
+  ]
 }
 EOF
+
+# Подписать (без этого шага verify-approval.py откажет с "signature is a required property"):
+APPROVAL_HMAC_KEY="$(grep '^export APPROVAL_HMAC_KEY=' ~/.bashrc | tail -1 | sed -E 's/^export APPROVAL_HMAC_KEY="(.*)"$/\1/')" \
+  python3 scripts/verify-approval.py sign /home/admin/approvals/$(date +%Y-%m-%d)-approval.json
 ```
 
-**Option B: Approve Nothing**
+Если не создать approval-файл — реализация не начнётся, следующий день
+стартует со свежего аудита.
 
-If you don't create an approval file, Phase 3 (implementation) will be skipped. Next day starts fresh with new audit.
-
-### Phase 3: Watch Implementation (18:00 PM)
-Hermes sends progress updates:
+### Phase 3: Implementation (сразу после подписанного approval)
+```bash
+tail -f audits/$(date +%Y-%m-%d)-implementation.log
 ```
-🚀 Improvements implemented. Running final verification...
-Log: /home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-implementation.log
-```
+Каждая одобренная задача реализуется последовательно через Claude Code
+(`--allowedTools Read,Edit,Write,Bash(...)`, `--max-turns 20`), с
+тестированием внутри каждой задачи (`bash -n`, `python -m py_compile`,
+`pytest`, `yamllint`, `shellcheck`, где применимо).
 
-Each approved issue is implemented sequentially via Claude Code (one at a time).
+### Phase 4: Auto-Commit or Alert
 
-### Phase 4: Auto-Commit or Alert (20:00 PM)
+Гейты перед коммитом, в порядке: `pytest` (блокирующий, не опция) → `ruff
+check scripts/` → `ci/check-changed-paths.sh` (агент не может править
+собственные `ci/`, `k8s/`, `.gitlab-ci.yml`, `.gitignore` — правится вручную
+человеком) → белый список `git add -- scripts compliance metrics tests docs
+*.md` → `ci/guard-staged-secrets.sh` (`.env`/`.pem`/`.key`/`id_rsa` не
+попадают в индекс) → финальная claude-верификация (`ready_to_commit`,
+fail-closed на любой невалидный JSON или ненулевой exit).
 
-**If ALL tests pass:**
 ```
-✅ All tests passed. Changes committed to git.
-Commit: abc1234 "Daily audit improvements: 2026-08-05"
+✅ ALL CHECKS PASSED → COMMITTING
 ```
-
-**If tests fail:**
+или
 ```
-❌ Verification failed. Review logs.
-Issues: ...
-Manual fix required before committing.
+❌ VERIFICATION FAILED → NOT COMMITTING
 ```
 
 ## 📁 File Locations
@@ -127,137 +116,80 @@ Manual fix required before committing.
 ```
 /home/admin/projects/nemohermes_bks/
 ├── scripts/
-│   ├── daily-audit.sh              ← Phase 1 (runs at 10:00)
-│   ├── daily-implement.sh           ← Phase 3 (runs at 18:00)
-│   ├── daily-verify.sh              ← Phase 4 (runs at 20:00)
-│   └── daily-cycle-orchestrator.sh  ← Optional full cycle
+│   ├── daily-audit.sh                ← генерация отчёта (+ --wait для immediate-флоу)
+│   ├── daily-audit-and-wait.sh       ← тонкая обёртка: daily-audit.sh --wait
+│   ├── daily-implement-now.sh        ← canonical реализация (approval-гейт + sequential loop)
+│   ├── daily-implement.sh            ← тонкая обёртка: daily-implement-now.sh --no-auto-verify (для оркестратора)
+│   ├── daily-verify.sh               ← standalone verify+commit (fixed-schedule флоу)
+│   ├── daily-verify-and-commit.sh    ← verify+commit, авто-вызывается из daily-implement-now.sh
+│   └── daily-cycle-orchestrator.sh   ← fixed-schedule флоу с Telegram-уведомлениями по фазам
 │
-├── audits/                          ← All audit data
-│   ├── YYYY-MM-DD-audit-report.json     (generated)
-│   ├── YYYY-MM-DD-approval.json         (you create this)
-│   ├── YYYY-MM-DD-implementation.log    (generated)
-│   └── cycle.log                       (all phases)
-│
+/home/admin/approvals/                ← approval-файлы, ВНЕ репозитория (AUDIT-005), 0700
+├── YYYY-MM-DD-approval.json
+
+/home/admin/projects/nemohermes_bks/
+├── audits/                           ← отчёты аудита и логи (не коммитятся, кроме *.md-отчётов)
+│   ├── YYYY-MM-DD-audit-report.json
+│   ├── YYYY-MM-DD-implementation.log
+│   └── YYYY-MM-DD-verify-commit.log
 └── kanban/
-    └── daily-improvements.json      (tasks for Phase 3)
+    └── YYYY-MM-DD-kanban.json
 ```
 
 ## 🔍 What Does the Audit Check?
 
-Claude analyzes:
-- ✅ **Code Quality:** Lint, complexity, duplication, best practices
-- ✅ **Security:** CVEs, dependencies, secrets, RBAC, auth
-- ✅ **Tests:** Coverage %, missing test files
-- ✅ **Documentation:** Gaps, outdated, inconsistencies
-- ✅ **Architecture:** SPOF, coupling, scaling issues
-- ✅ **Performance:** Bottlenecks, inefficiencies
-- ✅ **Deployment:** CI/CD, monitoring, health checks
-- ✅ **Processes:** Runbooks, SLOs, documentation
+Code quality, security (CVE/secrets/RBAC), test coverage, architecture
+(SPOF/coupling/scaling), documentation gaps, performance, deployment
+readiness, team processes — см. промпт в `scripts/daily-audit.sh`.
 
 ## 🧪 What Does Verification Check?
 
-Phase 4 runs:
-1. **Unit Tests:** `npm test` (if exists)
-2. **Integration Tests:** `pytest` (if exists)
-3. **Linting:** `eslint` (JavaScript), `pylint` (Python)
-4. **Security:** `trivy` (container images), `pip-audit` (dependencies)
-5. **Health:** `docker-compose ps`, health endpoints
-6. **Claude Verification:** Final health check before commit
-
-Only if ALL pass → auto-commit. Otherwise → alert user.
+1. `pytest tests/ -q` — блокирующий гейт, не декоративный (AUDIT-004).
+2. `ruff check scripts/`.
+3. `pip-audit -r requirements-dev.txt` (best-effort, security).
+4. Health-check `router` через прямой `curl http://127.0.0.1:4000/health` —
+   без `docker compose`: в этом каталоге нет `docker-compose.yml`, router —
+   отдельный репозиторий/стек.
+5. `ci/check-changed-paths.sh` + `ci/guard-staged-secrets.sh`.
+6. Финальная claude-верификация JSON (`ready_to_commit`).
 
 ## 🛠️ Manual Execution
 
-You can run phases manually anytime:
-
 ```bash
-# Run entire cycle
-bash /home/admin/projects/nemohermes_bks/scripts/daily-cycle-orchestrator.sh
+cd /home/admin/projects/nemohermes_bks
 
-# Or individual phases
-bash /home/admin/projects/nemohermes_bks/scripts/daily-audit.sh
-bash /home/admin/projects/nemohermes_bks/scripts/daily-implement.sh
-bash /home/admin/projects/nemohermes_bks/scripts/daily-verify.sh
-```
+# Immediate flow (после подписанного approval)
+bash scripts/daily-audit-and-wait.sh     # генерирует отчёт, ждёт approval, сам стартует реализацию
+bash scripts/daily-implement-now.sh      # если approval уже лежит и подписан
+bash scripts/daily-verify-and-commit.sh  # только verify+commit
 
-## 📊 Monitoring & Logs
-
-```bash
-# Watch cycle progress in real-time
-tail -f /home/admin/projects/nemohermes_bks/audits/cycle.log
-
-# View today's audit report
-cat /home/admin/projects/nemohermes_bks/audits/$(date +%Y-%m-%d)-audit-report.json | jq '.issues'
-
-# View implementation log
-tail -f /home/admin/projects/nemohermes_bks/audits/$(date +%Y-%m-%d)-implementation.log
-
-# See recent commits
-cd /home/admin/projects/nemohermes_bks && git log --oneline -n 10
+# Fixed-schedule flow
+bash scripts/daily-cycle-orchestrator.sh
 ```
 
 ## ❓ FAQ
 
-### Q: What if I don't approve any issues?
-A: Phase 3 (implement) is skipped. Next day starts fresh with new audit.
+**Q: Что если не одобрить ни одной задачи?**
+Реализация не стартует. Следующий день начинается со свежего аудита.
 
-### Q: Can I approve issues after 17:00?
-A: No, Phase 3 starts at 18:00 sharp. You must approve before then.
+**Q: Что если approval-файл не подписан или ключ не совпадает?**
+`verify-approval.py` откажет с конкретной причиной (`signature is a required
+property`, `HMAC-подпись не совпадает`, `APPROVAL_HMAC_KEY не задан`) —
+реализация не начнётся вообще, ни одного файла не тронуто.
 
-### Q: What if Claude reaches max-turns during implementation?
-A: Partial implementation. Phase 4 verification might fail. Manual review required.
+**Q: Что если Claude упирается в `--max-turns` во время реализации?**
+Задача помечается `⚠️ timeout or error`, но частичные правки на диске могут
+остаться — проверить `git diff` перед следующим прогоном. Верификация в
+конце всё равно должна поймать незавершённость через `pytest`/`ruff`.
 
-### Q: Can I stop a running phase?
-A: Yes, cancel the cron job: `hermes cron pause <job_id>`
+**Q: Что если тесты не проходят на Phase 4?**
+Коммита не будет. Правите вручную, затем `bash scripts/daily-verify-and-commit.sh` заново.
 
-### Q: What if tests fail in Phase 4?
-A: Changes are NOT committed. You must fix issues manually, then retry.
-
-### Q: Can I rerun the cycle today?
-A: Yes, manually: `bash /home/admin/projects/nemohermes_bks/scripts/daily-cycle-orchestrator.sh`
-
-## 🚨 Troubleshooting
-
-### Phase 1: "Audit didn't run at 10:00"
-Check if cron is enabled:
-```bash
-hermes cron list | grep daily-audit-10am
-# If "enabled: false", run:
-hermes cron resume daily-audit-10am
-```
-
-### Phase 2: "I created approval.json but Phase 3 won't start"
-Check file path and format:
-```bash
-# Must be exactly this:
-/home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-approval.json
-
-# Must be valid JSON:
-jq '.' /home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-approval.json
-```
-
-### Phase 3: "Implementation incomplete"
-Claude might have hit max-turns. Check log:
-```bash
-grep "reached max turns" /home/admin/projects/nemohermes_bks/audits/YYYY-MM-DD-implementation.log
-```
-Fix manually, then run Phase 4: `bash daily-verify.sh`
-
-### Phase 4: "Tests failed, not committing"
-Fix the code, then retry:
-```bash
-cd /home/admin/projects/nemohermes_bks
-# Fix code...
-bash scripts/daily-verify.sh
-```
-
-## 📞 Support
-
-Hermes skill: `daily-audit-cycle`
-Load skill: `skill_view name=daily-audit-cycle`
-
-All scripts: `/home/admin/projects/nemohermes_bks/scripts/`
+**Q: Как поправить сами гейты (`ci/`, `.gitlab-ci.yml`)?**
+Автономный цикл не может — `ci/check-changed-paths.sh` это блокирует
+намеренно (AUDIT-005). Правка `ci/` — это ручной коммит человеком, как
+сегодняшние AUDIT-005/007/008/009/010a.
 
 ---
 
-**Next audit runs:** Tomorrow at 10:00 AM ⏰
+**Аудит-бэклог отслеживается как `AUDIT-XXX` в `audits/YYYY-MM-DD-audit-report.json`.**
