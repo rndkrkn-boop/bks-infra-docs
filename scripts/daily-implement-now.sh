@@ -151,8 +151,20 @@ PROMPT_EOF
         TASK_ATTEMPT=1
         TASK_RC=1
         while :; do
+            # permission-mode dontAsk + явный --disallowedTools: без этого
+            # 2026-08-06 задача реально выполнила git commit, хотя её
+            # allowedTools ниже git не упоминает вовсе — проектный
+            # .claude/settings.local.json несёт накопленные за месяцы
+            # интерактивных сессий allow-паттерны (Bash(git commit *),
+            # Bash(curl *) без привязки к пути), которые складываются с
+            # allowedTools вызова, а не заменяются им. git add/rm оставлены
+            # разрешёнными — задаче реально нужно удалять файлы (git rm,
+            # см. AUDIT-004 2026-08-06), но ни add, ни rm сами по себе не
+            # создают коммит и не публикуют ничего наружу.
             if timeout 600 claude -p "$CLAUDE_PROMPT" \
-                --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*)" \
+                --permission-mode dontAsk \
+                --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*),Bash(git add:*),Bash(git rm:*),Bash(git status:*),Bash(git diff:*)" \
+                --disallowedTools "Bash(git commit*),Bash(git push*),Bash(curl*),Bash(wget*),Bash(sudo*)" \
                 --max-turns 20 < /dev/null >> "$LOG_FILE" 2>&1; then
                 TASK_RC=0
                 break

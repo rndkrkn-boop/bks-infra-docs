@@ -145,8 +145,17 @@ VERIFY_STDERR=$(mktemp)
 set +e
 VERIFY_ATTEMPT=1
 while :; do
+    # permission-mode dontAsk + explicit deny: этот вызов только читает
+    # состояние репо и не должен иметь возможности ничего изменить — ни
+    # закоммитить (это делает сам скрипт после READY=true), ни отправить по
+    # сети. Без --disallowedTools накопленные project-level allow-паттерны
+    # (Bash(git commit *), Bash(curl *)) складывались бы с allowedTools этого
+    # вызова, а не ограничивались им (см. находку 2026-08-06 в
+    # daily-implement-now.sh).
     VERIFICATION=$(timeout 300 claude -p "$VERIFY_PROMPT" \
+      --permission-mode dontAsk \
       --allowedTools "Read,Bash(git status:*),Bash(git ls-tree:*),Bash(git log:*),Bash(git diff:*)" \
+      --disallowedTools "Bash(git commit*),Bash(git push*),Bash(git add*),Bash(git rm*),Bash(curl*),Bash(wget*),Bash(sudo*)" \
       --max-turns 15 2>"$VERIFY_STDERR")
     CLAUDE_EXIT=$?
     if [ "$CLAUDE_EXIT" -eq 0 ]; then

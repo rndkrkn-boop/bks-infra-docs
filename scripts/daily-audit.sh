@@ -78,6 +78,18 @@ for REPO in "${NESTED_REPOS[@]}"; do
     DISALLOWED="${DISALLOWED}${DISALLOWED:+,}Read(./${REPO}/**)"
 done
 
+# Defense-in-depth: --allowedTools ниже не включает Bash вовсе, но проектный
+# .claude/settings.local.json содержит накопленные за месяцы интерактивных
+# сессий широкие allow-паттерны (Bash(git commit *), Bash(git push *),
+# Bash(curl *) без привязки к пути) — они действуют НЕЗАВИСИМО от allowedTools
+# конкретного вызова (--allowedTools и настройки уровня пользователя/проекта
+# складываются, а не заменяют друг друга). Явный --disallowedTools — это deny,
+# который перекрывает allow с любого уровня, и единственный надёжный способ
+# гарантировать, что аудит (по замыслу read-only) не может ничего закоммитить
+# или отправить по сети. Обнаружено 2026-08-06: одна из задач конвейера
+# реально выполнила git commit, хотя её собственный allowedTools git не упоминал.
+DISALLOWED="${DISALLOWED},Bash(git commit*),Bash(git push*),Bash(curl*),Bash(wget*),Bash(sudo*)"
+
 AUDIT_CONTEXT=$(cat << CONTEXT_END
 Project: nemohermes_bks
 Location: $PROJECT_DIR
@@ -141,6 +153,7 @@ ATTEMPT=1
 while :; do
     AUDIT_REPORT=$(timeout 1800 claude -p "$AUDIT_CONTEXT" \
         --add-dir "$PROJECT_DIR" \
+        --permission-mode dontAsk \
         --allowedTools "Read,Grep,Glob" \
         --disallowedTools "$DISALLOWED" \
         --max-turns 40 2>"$STDERR_FILE")
