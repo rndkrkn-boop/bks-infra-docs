@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Поддельный docker-CLI для smoke-тестов гейт-скриптов (tests/test_gate_smoke.py).
+#
+# Реальный docker/docker-compose в CI недоступен, а смысл этих smoke-тестов —
+# не проверить docker, а проверить, что сами гейт-скрипты (ci/test-gates.sh,
+# ci/verify-runtime.sh, ci/sandbox-test.sh) действительно долистывают до конца
+# и репортят правильный exit code на "всё сломано"-фикстуре. Именно это
+# ломал ((VAR++)) под set -e: счётчик 0→1 убивал скрипт до финального summary.
+#
+# Управляется переменной GATE_FIXTURE=pass|fail.
+
+set -euo pipefail
+
+FIXTURE="${GATE_FIXTURE:-pass}"
+FAIL_SERVICE="${GATE_FAIL_SERVICE:-router}"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  compose)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      version|config|up|down)
+        exit 0
+        ;;
+      ps)
+        if [[ "${1:-}" == "--services" ]]; then
+          # docker compose ps --services --filter status=running
+          if [[ "$FIXTURE" == "pass" ]]; then
+            printf 'app1\napp2\napp3\n'
+          fi
+          exit 0
+        elif [[ -n "${1:-}" ]]; then
+          # docker compose ps <service>
+          svc="$1"
+          if [[ "$FIXTURE" == "fail" && "$svc" == "$FAIL_SERVICE" ]]; then
+            echo "$svc   Exit 1"
+          else
+            echo "$svc   running"
+          fi
+          exit 0
+        else
+          # docker compose ps (preflight) — держим живым в обеих фикстурах,
+          # иначе гейты не успевают выполниться и не с чем сравнивать summary
+          echo "app   running"
+          exit 0
+        fi
+        ;;
+      exec)
+        # docker compose exec -T <service> curl ...
+        if [[ "$FIXTURE" == "fail" ]]; then
+          exit 1
+        fi
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  images)
+    if [[ "$FIXTURE" == "pass" ]]; then
+      echo "nemohermes   latest   abc123"
+    else
+      echo "other-image   latest   abc123"
+    fi
+    exit 0
+    ;;
+  exec)
+    # docker exec <container> <command...>
+    shift || true
+    sub="${1:-}"
+    case "$sub" in
+      id)
+        if [[ "$FIXTURE" == "pass" ]]; then echo 1000; else echo 0; fi
+        exit 0
+        ;;
+      touch)
+        target="${2:-}"
+        if [[ "$target" == "/test-write" ]]; then
+          # read-only rootfs: touch должен упасть в pass-фикстуре
+          if [[ "$FIXTURE" == "pass" ]]; then exit 1; else exit 0; fi
+        fi
+        exit 0
+        ;;
+      rm)
+        exit 0
+        ;;
+      grep)
+        echo "CapEff:	0000000000000000"
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  inspect)
+    if [[ "$FIXTURE" == "pass" ]]; then
+      echo "[no-new-privileges]"
+    else
+      echo "[]"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

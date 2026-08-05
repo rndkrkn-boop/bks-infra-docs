@@ -16,6 +16,12 @@
 
 set -euo pipefail
 
+# ~/.bashrc экспортирует ANTHROPIC_API_KEY, который иначе перебивает claude.ai-логин
+# у claude -p ниже (платный API вместо аккаунта) — unset влияет только на этот процесс.
+# Тот же класс бага, что чинился 2026-08-05 в daily-implement-now.sh/daily-verify*.sh,
+# но этот скрипт тогда остался незамеченным — вне области того аудита.
+unset ANTHROPIC_API_KEY
+
 PROJECT_DIR="/home/admin/projects/nemohermes_bks"
 AUDIT_DIR="$PROJECT_DIR/audits"
 REPORT_DATE=$(date +%Y-%m-%d)
@@ -53,15 +59,19 @@ echo "Date: $REPORT_DATE $REPORT_TIME"
 echo
 
 # Вложенные каталоги — самостоятельные git-репозитории (см. .gitignore), не
-# принадлежат этому аудиту. Без явного запрета Read/Grep/Glob всё равно
-# обойдут их на диске (gitignore на файловый доступ инструментов не влияет),
-# тратя ходы --max-turns и подмешивая чужую историю/секреты в отчёт.
+# принадлежат этому аудиту. Без явного запрета обойдут их на диске (gitignore
+# на файловый доступ инструментов не влияет), тратя ходы --max-turns и
+# подмешивая чужую историю/секреты в отчёт.
+#
+# Только Read(path) — движок разрешений Claude Code проверяет file-permission
+# паттерны исключительно по правилам Read(...); Grep(path)/Glob(path) в
+# --disallowedTools не матчатся вообще и заваливают запуск CLI-валидацией
+# ("is not matched by file permission checks") ещё до первого хода модели.
+# Правило Read(...) уже покрывает Read/Grep/Glob разом.
 NESTED_REPOS=(host-infra matrix monitoring MemGraphRAG NemoClaw router sandbox-templates bksamotsvety)
 DISALLOWED=""
 for REPO in "${NESTED_REPOS[@]}"; do
-    for TOOL in Read Grep Glob; do
-        DISALLOWED="${DISALLOWED}${DISALLOWED:+,}${TOOL}(./${REPO}/**)"
-    done
+    DISALLOWED="${DISALLOWED}${DISALLOWED:+,}Read(./${REPO}/**)"
 done
 
 AUDIT_CONTEXT=$(cat << CONTEXT_END
