@@ -38,38 +38,52 @@ echo "🔍 Runtime Drift Detection"
 echo "======================================"
 echo
 
-# ============ DOCKER-COMPOSE VALIDATION ============
-echo "${BLUE}[1/5] Docker Compose Validation${NC}"
+# ============ DOCKER AVAILABILITY ============
+# Раньше здесь была валидация docker-compose.yml в корне репозитория — такого
+# файла тут никогда не было и не будет: router/, monitoring/, MemGraphRAG/ —
+# независимые репозитории с собственными compose-стеками (см. .gitignore и
+# memory-bank/). `docker compose config` в этом каталоге гарантированно падал
+# на "no configuration file provided", и весь скрипт завершался на шаге 1,
+# не добираясь до реально полезных проверок 3–4 ниже.
+echo "${BLUE}[1/5] Docker Availability${NC}"
 echo
 
-if ! docker compose version &> /dev/null; then
-    check_fail "docker compose (v2 plugin) not installed"
+if ! docker ps > /dev/null 2>&1; then
+    check_fail "docker daemon not reachable"
     exit 1
 fi
 
-if ! docker compose config > /dev/null 2>&1; then
-    check_fail "docker-compose.yml is invalid"
-    exit 1
-fi
-
-check_pass "docker-compose.yml is valid"
+check_pass "docker daemon reachable"
 
 # ============ SERVICE RUNNING STATUS ============
+# Проверка по подстроке имени контейнера, а не по имени compose-сервиса из
+# несуществующего файла — работает независимо от того, в каком из отдельных
+# репозиториев/стеков контейнер реально поднят.
 echo
 echo "${BLUE}[2/5] Service Running Status${NC}"
 echo
 
-EXPECTED_SERVICES=("router" "memgraphrag" "monitoring" "gitlab" "registry")
+EXPECTED_SERVICES=("router" "memgraphrag" "monitoring" "gitlab")
 MISSING_SERVICES=0
+RUNNING_NAMES=$(docker ps --format '{{.Names}}')
 
 for service in "${EXPECTED_SERVICES[@]}"; do
-    if docker compose ps "$service" 2>/dev/null | grep -q "running"; then
+    if echo "$RUNNING_NAMES" | grep -qi "$service"; then
         check_pass "$service is running"
     else
         check_fail "$service is NOT running"
         MISSING_SERVICES=$((MISSING_SERVICES + 1))
     fi
 done
+
+# registry — best-effort: реальный registry на 192.168.2.180:5050 может жить
+# вне докера этого хоста (см. GitLab-инфраструктуру), поэтому предупреждение,
+# а не провал, если контейнер локально не виден.
+if echo "$RUNNING_NAMES" | grep -qi 'regist'; then
+    check_pass "registry is running"
+else
+    check_warn "registry container not visible locally (non-critical — may run elsewhere)"
+fi
 
 if [ "$MISSING_SERVICES" -gt 2 ]; then
     check_fail "Critical: More than 2 services down"

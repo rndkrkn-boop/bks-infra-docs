@@ -10,13 +10,16 @@ This document describes the actual runtime architecture and includes built-in ve
 
 | Service | Port | Container | Health Check | Status |
 |---------|------|-----------|--------------|--------|
-| **router** | 4000 | nemohermes-router | GET /health | ? |
-| **memgraphrag** | 8010 | memgraphrag | GET /health | ? |
-| **monitoring** | 3000 | prometheus/grafana | GET / | ? |
-| **gitlab** | 8929 | gitlab-runner | GET /health | ? |
-| **registry** | 5050 | docker-registry | GET /v2/ | ? |
+| **router** | 4000 | router-proxy | GET /health | ? |
+| **memgraphrag** | 8010 | memgraphrag-memgraphrag-1 | GET /health | ? |
+| **monitoring** | 3000 | monitoring-grafana / monitoring-prometheus | GET / | ? |
+| **gitlab** | 8929 | gitlab | GET /health | ? |
+| **registry** | 5050 | (не подтверждено на этом хосте — возможно вне docker/на другом хосте) | GET /v2/ | ? |
 
-*Status markers are updated by verify-runtime.sh*
+*Status markers are updated by verify-runtime.sh. Каждый сервис — независимый
+docker-compose стек в СВОЁМ репозитории (router/, monitoring/, MemGraphRAG/ —
+см. .gitignore), а не один общий docker-compose.yml в корне этого репозитория,
+как утверждалось ниже до 2026-08-06.*
 
 ## Component Descriptions
 
