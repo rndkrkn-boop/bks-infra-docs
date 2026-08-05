@@ -98,16 +98,16 @@ mkdir -p "$AUDIT_DIR"
     echo "📝 Step 4: Service health checks..."
     echo
     
-    if docker compose version &> /dev/null; then
-        echo "  → docker compose status"
-        docker compose ps | tail -5 || true
-
-        echo "  → Health endpoints"
-        if docker compose exec -T router curl -s http://localhost:4000/health &>/dev/null; then
-            echo "    ✅ router healthy"
-        else
-            echo "    ⚠️  router unreachable"
-        fi
+    # Прямой curl на localhost, а не docker compose exec: в этом каталоге нет
+    # docker-compose.yml (router — отдельный репозиторий/стек), поэтому
+    # `docker compose exec` раньше падал на "no configuration file provided"
+    # ещё до попытки достучаться до router, и здоровый router выглядел как
+    # недоступный.
+    echo "  → Health endpoints"
+    if curl -sf http://127.0.0.1:4000/health >/dev/null 2>&1; then
+        echo "    ✅ router healthy"
+    else
+        echo "    ⚠️  router unreachable"
     fi
     
     echo
@@ -193,7 +193,20 @@ Format: {\"status\": \"healthy|at_risk\", \"issues\": [], \"ready_to_commit\": t
     echo "════════════════════════════════════════════════════════════"
     echo
 
-    git add -- scripts ci compliance metrics tests k8s docs *.md .gitlab-ci.yml
+    # Гейт стоит ДО git add и завершает скрипт, а не уводит в else-ветку
+    # (AUDIT-005 п.5): автономный цикл не может править собственные гейты —
+    # ci/, .gitlab-ci.yml, .gitignore. Раньше ci/check-changed-paths.sh
+    # существовал, но не вызывался нигде, а белый список git add ниже сам же
+    # включал ci и .gitlab-ci.yml — то есть гейт и его нарушение жили рядом.
+    if ! bash "$PROJECT_DIR/ci/check-changed-paths.sh"; then
+        echo "❌ NOT COMMITTING: изменения затрагивают собственные гейты цикла"
+        exit 1
+    fi
+
+    # ci, k8s и .gitlab-ci.yml сознательно убраны из белого списка (AUDIT-005):
+    # если задаче нужно поправить сами гейты цикла, это коммитится вручную
+    # человеком, как сегодняшние AUDIT-005/007/008/009/010a — не автономно.
+    git add -- scripts compliance metrics tests docs *.md
 
     # Гейт стоит ДО git commit и завершает скрипт, а не уводит в else-ветку: так
     # между проверкой индекса и коммитом физически нечему вклиниться.
