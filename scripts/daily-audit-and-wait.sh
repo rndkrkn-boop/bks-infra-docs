@@ -6,11 +6,13 @@ set -euo pipefail
 
 PROJECT_DIR="/home/admin/projects/nemohermes_bks"
 AUDIT_DIR="$PROJECT_DIR/audits"
+APPROVAL_DIR="/home/admin/approvals"  # External to repo, user-only access
 REPORT_DATE=$(date +%Y-%m-%d)
 REPORT_FILE="$AUDIT_DIR/$REPORT_DATE-audit-report.json"
-APPROVAL_FILE="$AUDIT_DIR/$REPORT_DATE-approval.json"
+APPROVAL_FILE="$APPROVAL_DIR/$REPORT_DATE-approval.json"
 
-mkdir -p "$AUDIT_DIR"
+mkdir -p "$AUDIT_DIR" "$APPROVAL_DIR"
+chmod 700 "$APPROVAL_DIR"
 
 echo "════════════════════════════════════════════════════════"
 echo "🔍 PHASE 1: DAILY AUDIT"
@@ -112,6 +114,31 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
     if [ -f "$APPROVAL_FILE" ]; then
         echo ""
         echo "✅ APPROVAL RECEIVED!"
+        
+        # Validate approval file structure and content
+        echo "🔍 Validating approval file..."
+        
+        # Check JSON validity
+        if ! jq -e '.approved_issue_ids' "$APPROVAL_FILE" >/dev/null 2>&1; then
+            echo "❌ Invalid approval JSON or missing approved_issue_ids"
+            exit 1
+        fi
+        
+        # Validate each issue ID exists in audit report
+        INVALID_ISSUES=0
+        while IFS= read -r ISSUE_ID; do
+            if ! jq -e ".issues[] | select(.id == \"$ISSUE_ID\")" "$REPORT_FILE" >/dev/null 2>&1; then
+                echo "❌ Issue $ISSUE_ID not found in audit report"
+                INVALID_ISSUES=$((INVALID_ISSUES + 1))
+            fi
+        done < <(jq -r '.approved_issue_ids[]' "$APPROVAL_FILE")
+        
+        if [ $INVALID_ISSUES -gt 0 ]; then
+            echo "❌ $INVALID_ISSUES invalid issues in approval file"
+            exit 1
+        fi
+        
+        echo "✅ Approval file valid"
         echo "🚀 STARTING IMMEDIATE IMPLEMENTATION..."
         echo
         
