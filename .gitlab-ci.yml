@@ -1,8 +1,28 @@
 stages:
+  - tests
   - docs
   - compliance
   - backup
   - metrics
+
+# ── Полный прогон tests/: страховка от пропусков changes-фильтров ─────────
+# compliance-tests/backup-tests/metrics-tests гоняют СВОИ файлы только когда
+# меняются пути из их персональных changes:-списков — новый тестовый файл без
+# парной записи в changes молча выпадает из CI навсегда, и это уже привело к
+# тому, что коммиты уходили с текстом "All tests passed" без единого реального
+# прогона тестов. Эта джоба намеренно без rules:changes: гоняет tests/
+# целиком на каждом MR и на дефолтной ветке, независимо от того, что именно
+# изменилось.
+daily-cycle-tests:
+  stage: tests
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - pip install --no-cache-dir -r requirements-dev.txt
+  script:
+    - python -m pytest tests/ -q
 
 # ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
 # Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
@@ -227,6 +247,10 @@ metrics-exposition-lint:
     - rm -rf "$out"
 
 # ── Скрипты конвейера проходят shellcheck ─────────────────────────────────
+# Раньше джоб проверял только ci/metrics-bridge.sh — ((VAR++)) под set -e
+# (SC2219) в остальных гейт-скриптах (ci/verify-runtime.sh, ci/sandbox-test.sh,
+# scripts/daily-implement.sh) молча убивал их досрочно, и это не ловилось
+# ничем в CI. Джоб расширен на все shell-скрипты репозитория.
 metrics-shellcheck:
   stage: metrics
   # Тег пиннится намеренно: правило комплаенса SUP-001 запрещает плавающие теги
@@ -236,10 +260,11 @@ metrics-shellcheck:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - changes:
-        - ci/metrics-bridge.sh
+        - ci/**/*.sh
+        - scripts/**/*.sh
         - .gitlab-ci.yml
   script:
-    - shellcheck ci/metrics-bridge.sh
+    - shellcheck ci/*.sh scripts/*.sh
 
 # ── Юниты конвейера разбираются systemd ───────────────────────────────────
 # Юниты ставятся руками (sudo), поэтому опечатка в них не всплывает до момента,

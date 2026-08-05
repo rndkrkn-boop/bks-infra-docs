@@ -41,13 +41,13 @@ echo "Quality Gates Verification"
 echo "======================================"
 echo
 
-# Check docker-compose is running
-if ! docker-compose ps | grep -q "running"; then
-    critical_fail "docker-compose services not running. Start with: docker-compose up -d"
+# Check docker compose is running
+if ! docker compose ps | grep -q "running"; then
+    critical_fail "docker compose services not running. Start with: docker compose up -d"
     exit 1
 fi
 
-info "docker-compose services running"
+info "docker compose services running"
 echo
 
 # ============ CRITICAL GATES ============
@@ -74,7 +74,7 @@ else
 fi
 
 # 3. Services connectivity
-if docker-compose exec -T memgraphrag curl -s http://localhost:8010/health &>/dev/null; then
+if docker compose exec -T memgraphrag curl -s http://localhost:8010/health &>/dev/null; then
     pass "service-connectivity: memgraphrag responding"
 else
     fail "service-connectivity: memgraphrag not responding"
@@ -87,14 +87,14 @@ echo "HIGH PRIORITY GATES:"
 echo
 
 # 4. Router responding
-if docker-compose exec -T router curl -s http://localhost:4000/health &>/dev/null; then
+if docker compose exec -T router curl -s http://localhost:4000/health &>/dev/null; then
     pass "router-health: router responding"
 else
     fail "router-health: router not responding"
 fi
 
 # 5. Registry accessible
-if docker-compose exec -T registry curl -s http://localhost:5050/v2/ &>/dev/null; then
+if docker compose exec -T registry curl -s http://localhost:5050/v2/ &>/dev/null; then
     pass "registry-health: registry accessible"
 else
     fail "registry-health: registry not accessible"
@@ -108,7 +108,7 @@ echo
 
 # Check if services are running but marked healthy incorrectly
 HEALTHY_GATES=0
-RUNNING_SERVICES=$(docker-compose ps --services --filter "status=running" | wc -l)
+RUNNING_SERVICES=$(docker compose ps --services --filter "status=running" | wc -l)
 
 if [ "$RUNNING_SERVICES" -gt 0 ]; then
     pass "fail-open-detection: Services actively running ($RUNNING_SERVICES services)"

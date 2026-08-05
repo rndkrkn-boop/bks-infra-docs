@@ -42,12 +42,12 @@ echo
 echo "${BLUE}[1/5] Docker Compose Validation${NC}"
 echo
 
-if ! command -v docker-compose &> /dev/null; then
-    check_fail "docker-compose not installed"
+if ! docker compose version &> /dev/null; then
+    check_fail "docker compose (v2 plugin) not installed"
     exit 1
 fi
 
-if ! docker-compose config > /dev/null 2>&1; then
+if ! docker compose config > /dev/null 2>&1; then
     check_fail "docker-compose.yml is invalid"
     exit 1
 fi
@@ -63,11 +63,11 @@ EXPECTED_SERVICES=("router" "memgraphrag" "monitoring" "gitlab" "registry")
 MISSING_SERVICES=0
 
 for service in "${EXPECTED_SERVICES[@]}"; do
-    if docker-compose ps "$service" 2>/dev/null | grep -q "running"; then
+    if docker compose ps "$service" 2>/dev/null | grep -q "running"; then
         check_pass "$service is running"
     else
         check_fail "$service is NOT running"
-        ((MISSING_SERVICES++))
+        MISSING_SERVICES=$((MISSING_SERVICES + 1))
     fi
 done
 

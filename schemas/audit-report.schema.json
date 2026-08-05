@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bks.invalid/schemas/audit-report.schema.json",
+  "title": "Daily audit report",
+  "description": "Формат отчёта, который daily-audit.sh получает от Claude и сохраняет в audits/<дата>-audit-report.json",
+  "type": "object",
+  "required": ["issues"],
+  "additionalProperties": true,
+  "properties": {
+    "audit_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "issues": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/issue" }
+    },
+    "metrics": {
+      "type": "object"
+    }
+  },
+  "definitions": {
+    "issue": {
+      "type": "object",
+      "required": ["id", "priority", "title", "effort", "implementation"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^AUDIT-\\d+[a-z]?$"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "description": {
+          "type": "string"
+        },
+        "impact": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string",
+          "enum": ["QUICK", "MEDIUM", "COMPLEX"]
+        },
+        "implementation": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -12,7 +12,7 @@ FAILED=0
 
 # Start sandbox container
 echo "Starting container..."
-docker-compose up -d sandbox-app
+docker compose up -d sandbox-app
 
 # Wait for startup
 sleep 2
@@ -25,7 +25,7 @@ if [ "$USER_ID" != "0" ]; then
     echo "✓ Container running as non-root (UID: $USER_ID)"
 else
     echo "✗ FAIL: Container running as root!"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 fi
 
 # Test 2: Verify read-only root
@@ -35,7 +35,7 @@ if ! docker exec $CONTAINER touch /test-write 2>/dev/null; then
     echo "✓ Root filesystem is read-only"
 else
     echo "✗ FAIL: Root filesystem is writable!"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 fi
 
 # Test 3: Verify temp is writable
@@ -46,7 +46,7 @@ if docker exec $CONTAINER touch /tmp/test-write 2>/dev/null; then
     docker exec $CONTAINER rm /tmp/test-write
 else
     echo "✗ FAIL: /tmp is not writable"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 fi
 
 # Test 4: Verify capability drop
@@ -66,11 +66,11 @@ if docker inspect $CONTAINER --format='{{.HostConfig.SecurityOpt}}' | grep -q "n
     echo "✓ no-new-privileges flag is set"
 else
     echo "✗ FAIL: no-new-privileges flag not set"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 fi
 
 # Cleanup
-docker-compose down
+docker compose down
 
 # Results
 echo ""

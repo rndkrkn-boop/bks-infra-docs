@@ -1,0 +1,8 @@
+# Зависимости для локального/host-cron прогона тестов и линта — версии
+# пиннуты и обязаны совпадать с версиями, которые CI ставит в .gitlab-ci.yml
+# (compliance-tests/backup-tests/metrics-tests: pip install pytest==9.0.2).
+# Непиннутая зависимость в CI уже роняла lint в bks/memgraphrag без единого
+# изменения кода (коммит c0eece8) — правило SUP-002 в compliance/rules.toml
+# запрещает это на уровне комплаенса.
+pytest==9.0.2
+ruff==0.15.20
