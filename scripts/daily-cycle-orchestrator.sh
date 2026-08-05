@@ -28,9 +28,7 @@ send_telegram() {
 audit_phase() {
     log "🔍 PHASE 1: AUDIT STARTED"
     
-    bash "$SCRIPTS_DIR/daily-audit.sh"
-    
-    if [ $? -eq 0 ]; then
+    if bash "$SCRIPTS_DIR/daily-audit.sh"; then
         log "✅ AUDIT PHASE COMPLETE"
         send_telegram "🔍 Daily audit complete. Review report and approve improvements."
         return 0
@@ -68,9 +66,7 @@ wait_approval_phase() {
 implement_phase() {
     log "🚀 PHASE 3: IMPLEMENTATION STARTED"
     
-    bash "$SCRIPTS_DIR/daily-implement.sh"
-    
-    if [ $? -eq 0 ]; then
+    if bash "$SCRIPTS_DIR/daily-implement.sh"; then
         log "✅ IMPLEMENTATION PHASE COMPLETE"
         send_telegram "🚀 Improvements implemented. Running final verification..."
         return 0
@@ -88,7 +84,10 @@ verify_phase() {
     
     if [ $? -eq 0 ]; then
         log "✅ VERIFY PHASE COMPLETE"
-        send_telegram "✅ All tests passed. Changes committed to git."
+        # Конкретный счётчик тестов и хеш прогона — в git commit message и
+        # $CYCLE_LOG (daily-verify.sh пишет их туда же); здесь только факт
+        # результата, без повторения статичной фразы "All tests passed".
+        send_telegram "✅ Verification gate passed (tests + ruff). Changes committed — details in $CYCLE_LOG."
         return 0
     else
         log "⚠️  VERIFY PHASE FAILED"

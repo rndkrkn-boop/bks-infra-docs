@@ -51,7 +51,7 @@ jq -r '.approved_issues[] | @base64d' "$APPROVAL_FILE" 2>/dev/null | while read 
     TITLE=$(echo "$ISSUE" | jq -r '.title')
     IMPL=$(echo "$ISSUE" | jq -r '.implementation')
     
-    ((TASK_NUM++))
+    TASK_NUM=$((TASK_NUM + 1))
     
     cat >> "$KANBAN_FILE" << TASK_EOF
     {
@@ -116,10 +116,10 @@ Create necessary files and make changes. Output summary of what was done."
         --max-turns 6 >> "$LOG_FILE" 2>&1; then
         
         echo "✅ Task $TASK_ID completed"
-        ((COMPLETED++))
+        COMPLETED=$((COMPLETED + 1))
     else
         echo "❌ Task $TASK_ID failed"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 done
 

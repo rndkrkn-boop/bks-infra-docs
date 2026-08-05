@@ -5,6 +5,12 @@
 
 set -euo pipefail
 
+# ~/.bashrc экспортирует ANTHROPIC_API_KEY для интерактивных сессий, и claude -p
+# наследует его здесь же — он берёт верх над claude.ai-логином (платный API вместо
+# аккаунта), из-за чего цикл упирается в баланс ключа. unset — только в этом
+# процессе, интерактивный шелл и остальные инструменты не затрагиваются.
+unset ANTHROPIC_API_KEY
+
 PROJECT_DIR="/home/admin/projects/nemohermes_bks"
 AUDIT_DIR="$PROJECT_DIR/audits"
 KANBAN_DIR="$PROJECT_DIR/kanban"
@@ -26,33 +32,19 @@ mkdir -p "$AUDIT_DIR" "$KANBAN_DIR"
     # ============ STEP 1: Parse Approval & Create Kanban ============
     echo "📋 Step 1: Creating Kanban board from approved issues..."
     echo
-    
-    # Build Kanban JSON
-    cat > "$KANBAN_FILE" << 'KANBAN_INIT'
-{
-  "date": "REPLACE_DATE",
-  "total_tasks": 0,
-  "tasks": []
-}
-KANBAN_INIT
-    
-    # Parse approved issues and add to Kanban
-    TASK_NUM=0
-    TASKS_JSON='[]'
-    
-    # Extract approved issues from approval file
-    jq -r '.approved_issues[]' "$APPROVAL_FILE" 2>/dev/null | while read -r ISSUE_JSON; do
-        ((TASK_NUM++))
-        
-        ISSUE_ID=$(echo "$ISSUE_JSON" | jq -r '.id')
-        PRIORITY=$(echo "$ISSUE_JSON" | jq -r '.priority')
-        TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
-        IMPL=$(echo "$ISSUE_JSON" | jq -r '.implementation')
-        
-        echo "  Task $TASK_NUM: $TITLE ($PRIORITY)"
-    done
-    
-    echo "✅ Kanban created with $(jq '.approved_issues | length' "$APPROVAL_FILE") tasks"
+
+    # Build Kanban JSON directly with jq — no bash loop, no placeholder to forget substituting
+    jq --arg date "$REPORT_DATE" '{
+        date: $date,
+        total_tasks: (.approved_issues | length),
+        tasks: [.approved_issues[] | {id, priority, title, status: "pending"}]
+    }' "$APPROVAL_FILE" > "$KANBAN_FILE"
+
+    while IFS= read -r ISSUE; do
+        echo "  Task: $(echo "$ISSUE" | jq -r '.title') ($(echo "$ISSUE" | jq -r '.priority'))"
+    done < <(jq -c '.approved_issues[]' "$APPROVAL_FILE")
+
+    echo "✅ Kanban created with $(jq '.total_tasks' "$KANBAN_FILE") tasks"
     echo
     
     # ============ STEP 2: Sequential Loop with Claude ============
@@ -67,12 +59,13 @@ KANBAN_INIT
     COMPLETED=0
     FAILED=0
     
-    # Read each approved issue and implement
-    jq -r '.approved_issues[] | @json' "$APPROVAL_FILE" | while IFS= read -r ISSUE_LINE; do
-        ISSUE=$(echo "$ISSUE_LINE" | sed 's/^"//' | sed 's/"$//')
-        
-        ((TASK_NUM++))
-        
+    # Read each approved issue and implement.
+    # Process substitution (not a pipe) keeps TASK_NUM/COMPLETED/FAILED in this
+    # shell instead of a subshell copy — otherwise they'd reset to 0 after the loop
+    # and the summary below would always print zeros regardless of what happened.
+    while IFS= read -r ISSUE; do
+        TASK_NUM=$((TASK_NUM + 1))
+
         ISSUE_ID=$(echo "$ISSUE" | jq -r '.id')
         PRIORITY=$(echo "$ISSUE" | jq -r '.priority')
         TITLE=$(echo "$ISSUE" | jq -r '.title')
@@ -113,21 +106,30 @@ PROMPT_EOF
 )
         
         # Run Claude with embedded testing
+        # Write — план задач часто требует создать новый файл (Edit умеет только
+        # редактировать существующие). Bash ограничен ровно теми командами, которые
+        # запрашивает промпт выше (шаги 2–7), а не выдан безусловно — это автономный
+        # auto-commit контур, и остальные AUDIT-* задачи как раз про то, что ему
+        # нельзя доверять больше необходимого.
+        # </dev/null — без этого claude наследует stdin от process substitution
+        # цикла (`done < <(jq ...)`), может частично вычитать из него, и внешний
+        # `read -r ISSUE` получает EOF после первой же итерации: реально
+        # обрабатывалась 1 задача из 10, хотя канбан создавался на все 10.
         if timeout 600 claude -p "$CLAUDE_PROMPT" \
-            --allowedTools "Read,Edit" \
-            --max-turns 8 >> "$LOG_FILE" 2>&1; then
+            --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*)" \
+            --max-turns 20 < /dev/null >> "$LOG_FILE" 2>&1; then
             
             echo "✅ Task $TASK_NUM completed"
-            ((COMPLETED++))
+            COMPLETED=$((COMPLETED + 1))
         else
             echo "⚠️  Task $TASK_NUM timeout or error"
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
         fi
-        
+
         echo ""
         echo "⏱️  $(date '+%H:%M:%S') — Completed $COMPLETED/$TASK_NUM tasks"
         echo ""
-    done
+    done < <(jq -c '.approved_issues[]' "$APPROVAL_FILE")
     
     # ============ STEP 3: Summary ============
     echo ""
