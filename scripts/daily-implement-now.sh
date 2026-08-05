@@ -14,6 +14,8 @@ unset ANTHROPIC_API_KEY
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/claude-rate-limit-lib.sh
 . "$SCRIPT_DIR/claude-rate-limit-lib.sh"
+# shellcheck source=scripts/claude-task-orchestrator-lib.sh
+. "$SCRIPT_DIR/claude-task-orchestrator-lib.sh"
 
 # --no-auto-verify: для daily-cycle-orchestrator.sh, который сам вызывает
 # daily-verify.sh отдельным шагом (Telegram-уведомления по фазам) — без флага
@@ -114,74 +116,18 @@ mkdir -p "$AUDIT_DIR" "$KANBAN_DIR"
         echo "$IMPL"
         echo
         
-        # ============ CLAUDE TASK: IMPLEMENT + TEST ============
-        echo "🤖 Executing via Claude (with embedded testing)..."
+        # ============ CLAUDE TASK: IMPLEMENT + TEST (многоходово, --resume) ============
+        # 2026-08-06: заменено с одного claude -p --max-turns 20 на воркер-сессию
+        # через claude-task-orchestrator-lib.sh — сложные многофайловые задачи
+        # регулярно упирались в "Reached max turns" и терялись, хотя частичные
+        # правки уже были на диске. См. план в памяти
+        # claude-task-orchestrator-resume (--resume вместо фиксированного бюджета
+        # ходов) и claude-code-allowedtools-not-isolated (почему permission-флаги
+        # передаются на каждый вызов заново).
+        echo "🤖 Executing via Claude (multi-turn session with embedded testing)..."
         echo
-        
-        CLAUDE_PROMPT=$(cat << PROMPT_EOF
-Task $TASK_NUM of $(jq '.approved_issues | length' "$APPROVAL_FILE"): $TITLE
 
-Implementation requirements:
-$IMPL
-
-IMPORTANT: As you implement, include testing:
-1. Create files/changes
-2. For each file created, verify it exists: \`ls -la FILE\`
-3. For code files, run basic syntax check
-4. For scripts, run: \`bash -n SCRIPT.sh\` (syntax check)
-5. For Python, run: \`python -m py_compile FILE.py\`
-6. For YAML, run: \`yamllint FILE.yaml\` or \`yq . FILE.yaml\`
-7. Run any existing unit tests: npm test, pytest
-8. Output summary: what was created, what was tested, pass/fail
-
-Keep implementation focused and concise. Stop after creating necessary files.
-PROMPT_EOF
-)
-        
-        # Run Claude with embedded testing
-        # Write — план задач часто требует создать новый файл (Edit умеет только
-        # редактировать существующие). Bash ограничен ровно теми командами, которые
-        # запрашивает промпт выше (шаги 2–7), а не выдан безусловно — это автономный
-        # auto-commit контур, и остальные AUDIT-* задачи как раз про то, что ему
-        # нельзя доверять больше необходимого.
-        # </dev/null — без этого claude наследует stdin от process substitution
-        # цикла (`done < <(jq ...)`), может частично вычитать из него, и внешний
-        # `read -r ISSUE` получает EOF после первой же итерации: реально
-        # обрабатывалась 1 задача из 10, хотя канбан создавался на все 10.
-        TASK_ATTEMPT=1
-        TASK_RC=1
-        while :; do
-            # permission-mode dontAsk + явный --disallowedTools: без этого
-            # 2026-08-06 задача реально выполнила git commit, хотя её
-            # allowedTools ниже git не упоминает вовсе — проектный
-            # .claude/settings.local.json несёт накопленные за месяцы
-            # интерактивных сессий allow-паттерны (Bash(git commit *),
-            # Bash(curl *) без привязки к пути), которые складываются с
-            # allowedTools вызова, а не заменяются им. git add/rm оставлены
-            # разрешёнными — задаче реально нужно удалять файлы (git rm,
-            # см. AUDIT-004 2026-08-06), но ни add, ни rm сами по себе не
-            # создают коммит и не публикуют ничего наружу.
-            if timeout 600 claude -p "$CLAUDE_PROMPT" \
-                --permission-mode dontAsk \
-                --allowedTools "Read,Edit,Write,Bash(ls:*),Bash(bash -n:*),Bash(python -m py_compile:*),Bash(pytest:*),Bash(npm test:*),Bash(yamllint:*),Bash(yq:*),Bash(shellcheck:*),Bash(git add:*),Bash(git rm:*),Bash(git status:*),Bash(git diff:*)" \
-                --disallowedTools "Bash(git commit*),Bash(git push*),Bash(curl*),Bash(wget*),Bash(sudo*)" \
-                --max-turns 20 < /dev/null >> "$LOG_FILE" 2>&1; then
-                TASK_RC=0
-                break
-            fi
-            # Проверяем только хвост лога (этот запуск), а не файл целиком —
-            # иначе совпадение из давно прошедшей задачи запустило бы ретрай
-            # для текущей.
-            if claude_should_retry "$TASK_ATTEMPT" "$(tail -c 4000 "$LOG_FILE")"; then
-                echo "⏳ Похоже на исчерпанный лимит подписки claude.ai (попытка $TASK_ATTEMPT/$CLAUDE_RATE_LIMIT_MAX_ATTEMPTS) — жду ${CLAUDE_RATE_LIMIT_WAIT_SECONDS}s и повторяю ту же задачу" >> "$LOG_FILE"
-                sleep "$CLAUDE_RATE_LIMIT_WAIT_SECONDS"
-                TASK_ATTEMPT=$((TASK_ATTEMPT + 1))
-                continue
-            fi
-            break
-        done
-
-        if [ "$TASK_RC" -eq 0 ]; then
+        if run_task_via_worker_session "$ISSUE_ID" "$PRIORITY" "$TITLE" "$IMPL" "$LOG_FILE"; then
             echo "✅ Task $TASK_NUM completed"
             COMPLETED=$((COMPLETED + 1))
         else
