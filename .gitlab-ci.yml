@@ -127,7 +127,7 @@ compliance-tests:
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends git
-    - pip install --no-cache-dir pytest==9.0.2
+    - pip install --no-cache-dir pytest==9.0.3
     - git config --global user.email "ci@bks.invalid"
     - git config --global user.name "bks ci"
   script:
@@ -153,7 +153,7 @@ backup-tests:
         - tests/test_backup_manager.py
         - .gitlab-ci.yml
   before_script:
-    - pip install --no-cache-dir pytest==9.0.2
+    - pip install --no-cache-dir pytest==9.0.3
   script:
     - python -m pytest tests/test_backup_manager.py -q
     # Политика обязана разбираться и совпадать с движком: опечатка в
@@ -183,7 +183,7 @@ metrics-tests:
         - tests/test_metrics_bridge.py
         - .gitlab-ci.yml
   before_script:
-    - pip install --no-cache-dir pytest==9.0.2
+    - pip install --no-cache-dir pytest==9.0.3
   script:
     - python -m pytest tests/test_metrics_bridge.py -q
     # Каталог источников обязан разбираться и совпадать с движком: опечатка в

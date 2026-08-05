@@ -1,8 +1,12 @@
 # Зависимости для локального/host-cron прогона тестов и линта — версии
 # пиннуты и обязаны совпадать с версиями, которые CI ставит в .gitlab-ci.yml
-# (compliance-tests/backup-tests/metrics-tests: pip install pytest==9.0.2).
+# (compliance-tests/backup-tests/metrics-tests: pip install pytest==9.0.3).
 # Непиннутая зависимость в CI уже роняла lint в bks/memgraphrag без единого
 # изменения кода (коммит c0eece8) — правило SUP-002 в compliance/rules.toml
 # запрещает это на уровне комплаенса.
-pytest==9.0.2
+# 9.0.2 → 9.0.3: PYSEC-2026-1845, найдено ci/scan-deps.sh 2026-08-06 (тем же
+# прогоном, что впервые заставил scan-deps.sh реально сканировать — AUDIT-009).
+pytest==9.0.3
 ruff==0.15.20
+pip-audit==2.10.1
+jsonschema==4.10.3
