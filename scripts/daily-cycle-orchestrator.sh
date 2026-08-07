@@ -20,8 +20,39 @@ log() {
 
 send_telegram() {
     local MSG="$1"
-    # TODO: Integrate Telegram notification
-    echo "📤 [TODO] Send to Telegram: $MSG"
+    
+    # Проверяем наличие необходимых переменных окружения
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+        # Если переменные не установлены, логируем как warning, но не падаем
+        log "⚠️  Telegram notification skipped (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set): $MSG"
+        return 0
+    fi
+    
+    # Используем Telegram Bot API для отправки сообщения
+    # API endpoint: https://api.telegram.org/bot<TOKEN>/sendMessage
+    local API_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+    local PAYLOAD=$(cat <<EOF
+{
+    "chat_id": ${TELEGRAM_CHAT_ID},
+    "text": "${MSG}",
+    "parse_mode": "HTML"
+}
+EOF
+)
+    
+    # Отправляем сообщение через curl
+    if curl -s -X POST "$API_URL" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        -m 10 \
+        > /dev/null 2>&1; then
+        log "📤 Telegram notification sent: $MSG"
+        return 0
+    else
+        # Логируем ошибку, но не прерываем цикл
+        log "⚠️  Failed to send Telegram notification: $MSG"
+        return 1
+    fi
 }
 
 # ============ PHASE 1: AUDIT (10:00) ============
