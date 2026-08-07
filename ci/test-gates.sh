@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # test-gates.sh — Verification script for quality gates
-# Runs all gate checks against docker-compose services
+# СТАТУС: АРХИВНЫЙ / НЕ ИСПОЛЬЗУЕТСЯ
+# 
+# Этот скрипт был написан для docker-compose инфраструктуры с docker-образами.
+# На 2026-08-07 проект перешёл на другую архитектуру CI/CD (см. ARCHITECTURE.md §0).
+# Качественные гейты теперь определяются в docs/roadmap-gates.yaml (Phase 1+).
+#
+# Первый рабочий гейт: unit-tests-coverage (pytest-cov в daily-cycle-tests, Phase 1)
+# Ссылка: AUDIT-204, .gitlab-ci.yml daily-cycle-tests job
 
 set -euo pipefail
 

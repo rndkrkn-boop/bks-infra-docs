@@ -149,6 +149,22 @@ GitLab CI: ручной quality-gate job
 без оценки качества; аудит классифицирует это как High risk. Ранее описанный
 локальный `.githooks/pre-push` удалён и частью текущего контроля не является.
 
+### Quality gates nemohermes_bks (AUDIT-204 Phase 1)
+
+PHASE 1 (2026-08-07 — текущий спринт):
+- **unit-tests-coverage** ≥75%: добавлен в `.gitlab-ci.yml` job `daily-cycle-tests`
+  - требует: `pytest-cov==5.0.0` в requirements-dev.txt
+  - флаги: `--cov=. --cov-fail-under=75 --cov-report=xml --cov-report=term-missing`
+  - артефакты: coverage.xml, .coverage, htmlcov/ (30 дней)
+  
+Полный **roadmap качественных гейтов** (Phase 1-5): см. [`docs/roadmap-gates.yaml`](./docs/roadmap-gates.yaml)
+- Phase 2: docker-build-success
+- Phase 3: security-scan-pass (trivy)
+- Phase 4: helm-lint (если Helm/K3s вернётся)
+- Phase 5: performance-regression monitoring (Prometheus)
+
+Ссылка: AUDIT-204 (MEDIUM)
+
 ---
 
 ## 1. Контур деплоя (хост → sandbox)

@@ -11,6 +11,8 @@ unset ANTHROPIC_API_KEY
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/claude-rate-limit-lib.sh
 . "$SCRIPT_DIR/claude-rate-limit-lib.sh"
+# shellcheck source=scripts/verify-ready-lib.sh
+. "$SCRIPT_DIR/verify-ready-lib.sh"
 
 # Переопределяемо через окружение — иначе гейт автокоммита невозможно прогнать
 # в тесте на одноразовом репозитории, только на живом рабочем дереве.
@@ -187,15 +189,8 @@ Format: {\"status\": \"healthy|at_risk\", \"issues\": [], \"ready_to_commit\": t
     fi
 
     # Fail-closed: READY остаётся false, пока валидность JSON и поле не доказаны явно.
-    # Раньше `jq ... || echo "true"` превращал сбой парсинга в разрешение на коммит.
-    # Сравнение `== true` внутри jq отсекает строку "true" и любое truthy-значение
-    # другого типа — разрешением считается только булев литерал.
-    READY=false
-    if [ "$CLAUDE_EXIT" -eq 0 ] && printf '%s' "$VERIFICATION_JSON" | jq -e . >/dev/null 2>&1; then
-        READY=$(printf '%s' "$VERIFICATION_JSON" | jq -r 'if .ready_to_commit == true then "true" else "false" end')
-    else
-        echo "  ⚠️  Verification output invalid JSON or claude exited non-zero (exit=$CLAUDE_EXIT) — treating as NOT ready"
-    fi
+    # verify_ready() — единственный источник истины о готовности к коммиту.
+    READY=$(verify_ready "$CLAUDE_EXIT" "$VERIFICATION_JSON")
 
     echo
 
