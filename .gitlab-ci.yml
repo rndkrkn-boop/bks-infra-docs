@@ -83,6 +83,21 @@ docs-consistency:
   script:
     - python scripts/check-docs-consistency.py
 
+# ── Реестр компонентов: docs/components.toml <-> файловая система ─────────
+# Намеренно БЕЗ rules:changes:. Триггер этой проверки — появление нового
+# каталога с .git, который сам по себе не трогает ни один из отслеживаемых
+# файлов (это ровно то, что произошло с matrix/: репозиторий появился, не
+# изменив ни строки в ARCHITECTURE.md/README.md/.gitlab-ci.yml). changes:
+# здесь замаскировал бы именно тот случай, для которого проверка написана.
+components-registry:
+  stage: docs
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - python scripts/check-components-registry.py
+
 # ── Комплаенс-аудит: правила из compliance/rules.toml ─────────────────────
 # Проверки детерминированные и zero-dep (tomllib в stdlib 3.11), поэтому
 # джобу нужен только git — образ python:3.11-slim его не содержит.

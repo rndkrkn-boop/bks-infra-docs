@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Реестр компонентов nemohermes_bks: у каждого вложенного git-репозитория (и у
+# самого мета-репо) — явная, проверяемая декларация рода деятельности.
+#
+# Зачем: matrix/ прожил как git-репозиторий больше двух недель, ни разу не
+# попав ни в README.md, ни в GitLab, ни в daily-backup — ни одна существующая
+# проверка (scripts/check-docs-consistency.py сверяет только ARCHITECTURE.md
+# ↔ ARCHITECTURE_MERMAID.md ↔ README.md ↔ DEPLOY.md между собой) не смотрит
+# на файловую систему и не может заметить новый каталог с .git внутри.
+# check-components-registry.py смотрит: любой каталог с .git обязан быть
+# объявлен здесь, а объявленный обязан существовать. Разошлось — CI падает.
+#
+# kind — фиксированный список (single source of truth в самом чекере, а не
+# только здесь), основан на реально наблюдаемой форме деплоя каждого
+# компонента (что делает его .gitlab-ci.yml), а не на произвольном
+# группировании:
+#   meta                     — сам nemohermes_bks: docs/CI-оркестрация/
+#                               compliance, не строит и не деплоит ничего сам
+#   vendored-upstream        — внешний апстрим, не в группе bks GitLab
+#   config-validate-only     — только валидация данных, нет деплоя
+#   build-and-push           — kaniko build → registry → compose pull/up
+#   sandbox-profile-sync     — деплой конфигов внутрь OpenShell sandbox
+#   host-native-deploy       — файлы на хост + systemd, без docker
+#   compose-deploy-from-source — docker compose up прямо из чекаута, без
+#                               registry (нет отдельно версионируемого образа)
+#
+# readme_entry = true — обязана быть строка `[`<path>/`](./<path>/)` в
+# README.md (таблица «Состав»); проверяется буквально, не эвристикой.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[components]]
+path = "."
+kind = "meta"
+gitlab_project = "bks/infra"
+readme_entry = false
+notes = "Сам nemohermes_bks: ARCHITECTURE.md, CI-оркестрация, compliance/, backup-движок+политика (backup-manager.py, retention.toml). Не строит docker-образов — см. docs/roadmap-gates.yaml, docker-build-success."
+
+[[components]]
+path = "NemoClaw"
+kind = "vendored-upstream"
+gitlab_project = ""
+readme_entry = true
+notes = "github.com/NVIDIA/NemoClaw — апстрим, не в группе bks GitLab, не участвует в bks/* CI."
+
+[[components]]
+path = "sandbox-templates"
+kind = "config-validate-only"
+gitlab_project = "bks/sandbox-templates"
+readme_entry = true
+notes = "CI: только validate-presets (YAML + обязательные поля). Не деплоит ничего сам — потребляется bksamotsvety."
+
+[[components]]
+path = "router"
+kind = "build-and-push"
+gitlab_project = "bks/router"
+readme_entry = true
+notes = "CI: lint → eval-config → unit-test → build (kaniko → registry) → deploy (gb10-shell, docker compose pull && up -d)."
+
+[[components]]
+path = "MemGraphRAG"
+kind = "build-and-push"
+gitlab_project = "bks/memgraphrag"
+readme_entry = true
+notes = "Тот же паттерн, что router: build (kaniko) → registry → deploy (compose pull && up -d)."
+
+[[components]]
+path = "bksamotsvety"
+kind = "sandbox-profile-sync"
+gitlab_project = "bks/bksamotsvety"
+readme_entry = true
+notes = "CI: lint (shellcheck) → sync (gb10-shell): deploy/.env ← CI Variables + sync-profiles.sh внутрь sandbox bks-production. Нет своего docker-образа."
+
+[[components]]
+path = "host-infra"
+kind = "host-native-deploy"
+gitlab_project = "bks/host-infra"
+readme_entry = true
+notes = "CI: lint (shellcheck) → deploy (gb10-shell): tar-поток файлов в /home/admin/servers/ + drift-check systemd-юнитов. Сознательно вне docker (сторож ниже docker daemon)."
+
+[[components]]
+path = "monitoring"
+kind = "compose-deploy-from-source"
+gitlab_project = "bks/monitoring"
+readme_entry = true
+notes = "CI: lint (json/yaml) → deploy (gb10-shell): docker compose -p monitoring up -d прямо из чекаута, без отдельного build/registry-шага."
+
+[[components]]
+path = "matrix"
+kind = "compose-deploy-from-source"
+gitlab_project = "bks/matrix"
+readme_entry = true
+notes = "CI: lint (shellcheck + compose-lint) — без deploy-стадии, docker compose up -d вручную. platforms.matrix ещё не подключён ни в один профильный config.yaml (R13, аудит 2026-07-25)."

@@ -19,6 +19,10 @@ git-репозитории.
 
 Полная схема взаимодействия всех частей: [`ARCHITECTURE.md`](./ARCHITECTURE.md)
 (ASCII) / [`ARCHITECTURE_MERMAID.md`](./ARCHITECTURE_MERMAID.md) (блок-диаграммы).
+Род деятельности каждого компонента (кто строит образ, кто просто
+деплоит конфиги, кто вне группы `bks` в GitLab) — машинно-проверяемо в
+[`docs/components.toml`](./docs/components.toml); новый git-репозиторий,
+не попавший туда, роняет CI (`components-registry`).
 
 ## Состав
 
