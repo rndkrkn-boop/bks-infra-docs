@@ -1,6 +1,10 @@
 # Trusted Base Images
 # Format: image:tag@digest
 # Used by ci/verify-image-sig.sh for signature verification
+#
+# Status: verify-image-sig.sh is not wired into any real pipeline here yet
+# (see docs/ci-pipeline-notes.md) — this list is currently only exercised
+# by scripts/cosign-selftest.sh.
 
 # Official base images (public registries)
 docker.io/library/ubuntu:22.04@sha256:e6173d4dc55e76b87c93ffc770889f7e82b3091529e8d5e77b8d8c9898b5c5e0

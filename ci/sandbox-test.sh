@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # sandbox-test.sh — Verify sandbox isolation enforcement
+#
+# Статус: не вызывается ни .gitlab-ci.yml, ни автономным daily-циклом.
+# Требует решения: подключить в CI (вместе с ci/sandbox-isolation.yaml,
+# который он поднимает) или задокументировать, зачем оставлен как есть.
 
 set -euo pipefail
 
