@@ -118,6 +118,28 @@ required = true
 # только распаковываемость.
 min_bytes = 1024
 
+[[artifacts]]
+name = "matrix-synapse.tar.gz"
+kind = "tar.gz"
+required = true
+min_bytes = 1024
+
+[[artifacts]]
+name = "matrix-postgres.sql.gz"
+kind = "opaque"
+required = true
+# Логический дамп (pg_dump), не raw tar PGDATA: PGDATA внутри bind mount
+# принадлежит postgres-пользователю образа, недоступен admin на хосте, и
+# raw tar живой Postgres-директории без pg_start_backup()/pg_basebackup рискует
+# дать невосстановимый снимок — хуже, чем недоказанная консистентность Qdrant
+# выше. kind="opaque" — сознательно, не "tar.gz": .sql.gz это gzip текстового
+# дампа, а не tar-архив; check_targz() вызывает tarfile.open(path, "r:gz") и
+# упал бы на каждом прогоне с tarfile.TarError, хотя дамп абсолютно валиден.
+# "opaque" проверяет то, что реально применимо — размер и sha256 (backup-
+# manager.py verify_snapshot(), deep-check пропускается для kind не в
+# {sqlite, tar.gz}).
+min_bytes = 256
+
 # ── Restore-drill ────────────────────────────────────────────────────────────
 [drill]
 # Каталоги, в которые drill не имеет права восстанавливать НИКОГДА. Регламент

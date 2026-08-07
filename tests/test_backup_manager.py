@@ -31,9 +31,11 @@ def load_engine():
 
 engine = load_engine()
 
-# Минимальная политика: два обязательных артефакта вместо восьми. Тесты про
-# логику полноты, а не про конкретный состав прод-набора — состав живёт в
-# host-infra/backup/retention.toml и меняется без правки тестов.
+# Минимальная политика: два обязательных артефакта вместо десяти прод-набора.
+# Тесты про логику полноты, а не про конкретный состав — состав живёт в
+# backup/retention.toml (движок и политика — nemohermes_bks, не host-infra;
+# host-infra даёт только сам скрипт bks-backup.sh и systemd-юниты) и
+# меняется без правки тестов.
 POLICY = dict(
     meta=dict(version="test"),
     layout=dict(root="/unused", snapshots_dir="snapshots"),

@@ -408,7 +408,7 @@ Backup запускает `bks-backup.timer` ежедневно в 03:00. Еди
 иммутабельный снапшот `/home/admin/backups/bks/snapshots/<YYYYMMDDTHHMMSSZ>/`
 (раскладка и обоснование — `host-infra/backup/README.md`).
 
-Полный снапшот содержит ровно 8 обязательных артефактов, перечисленных в
+Полный снапшот содержит ровно 10 обязательных артефактов, перечисленных в
 `backup/retention.toml` (секции `[[artifacts]]`):
 
 1. `kanban-default.db`
@@ -419,11 +419,23 @@ Backup запускает `bks-backup.timer` ежедневно в 03:00. Еди
 6. `profiles.tar.gz`
 7. `memgraphrag-data.tar.gz`
 8. `qdrant.tar.gz`
+9. `matrix-synapse.tar.gz`
+10. `matrix-postgres.sql.gz` — логический дамп (`pg_dump`), не raw tar
+    PGDATA: живая Postgres-директория под bind mount принадлежит
+    пользователю образа, недоступна `admin` на хосте, а raw tar работающего
+    PGDATA без snapshot-механизма рискует дать невосстановимый снимок.
+    `kind = "opaque"` в политике — сознательно не `tar.gz`, это gzip
+    текстового дампа, а не tar-архив.
 
 Контракт успеха: **`manifest.json` снапшота содержит `status: "complete"` (то
-есть 8/8 обязательных артефактов не меньше `min_bytes` и `errors: 0`), снапшот
-проходит `verify`, и он же проходит изолированный `restore-drill`.** Свежесть
-`.last_backup` или отдельного архива по-прежнему недостаточна.
+есть 10/10 обязательных артефактов не меньше `min_bytes` и `errors: 0`),
+снапшот проходит `verify`, и он же проходит изолированный `restore-drill`.**
+Свежесть `.last_backup` или отдельного архива по-прежнему недостаточна.
+
+Артефакты 9–10 добавлены 2026-08-07 вместе с шагами 5–6 `bks-backup.sh`
+(архитектурный аудит, раздел «Объединить/разбить» → matrix/). До этой правки
+`matrix/` был единственным компонентом вне backup-контракта — см. R13 в
+[аудите 2026-07-25](./docs/audit/full-project-audit-2026-07-25.md).
 
 Контракт теперь машиночитаемый, а не только текстовый — состав проверяет
 `scripts/backup-manager.py`, и объявить набор полным скрипт бэкапа не может:
@@ -493,7 +505,7 @@ POLICY=/home/admin/servers/backup/retention.toml
 # 1. Прогон вообще состоялся (лог тронут после старта)
 [ "$(stat -c %Y /home/admin/servers/backup/backup.log)" -ge "$START_EPOCH" ]
 
-# 2. Новейший снапшот полон: 8/8 и errors=0 (rc=1 при неполном)
+# 2. Новейший снапшот полон: 10/10 и errors=0 (rc=1 при неполном)
 python3 "$MANAGER" --policy "$POLICY" verify --root "$BACKUP_DIR"
 
 # 3. Из него реально восстанавливается (изолированный каталог, не production)
@@ -555,7 +567,7 @@ systemctl list-timers --no-pager bks-watchdog.timer bks-backup.timer
 `backup_freshness` проверяет только возраст новейшего backup-файла, поэтому
 использовать его как заключение о recoverability по-прежнему нельзя. Для этого
 есть отдельная проверка `backup_recoverability`: она спрашивает
-`backup-manager.py status` о полноте новейшего снапшота (8/8) и о давности
+`backup-manager.py status` о полноте новейшего снапшота (10/10) и о давности
 restore-drill. Семантика `backup_freshness` намеренно не менялась — на неё
 ссылаются дашборды и история метрик в Loki.
 

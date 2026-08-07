@@ -245,11 +245,12 @@ remediation = "Вернуть в DEPLOY.md раздел «Backup: контрак
 [rules.check]
 type = "required_pattern"
 path = "DEPLOY.md"
-# Контракт с 2026-08-04 машиночитаемый: 8 обязательных артефактов перечислены в
-# retention.toml, а признаком успеха служит status "complete" в manifest.json
-# плюс пройденный restore-drill. Проверяем, что DEPLOY.md всё это фиксирует —
-# не имитацию контракта, а именно те три условия.
-pattern = '(?s)8 обязательных артефактов.{0,6000}status.{0,80}complete.{0,4000}restore-drill'
+# Контракт с 2026-08-04 машиночитаемый: обязательные артефакты перечислены в
+# retention.toml (10 с 2026-08-07 — добавлены matrix-synapse.tar.gz и
+# matrix-postgres.sql.gz), а признаком успеха служит status "complete" в
+# manifest.json плюс пройденный restore-drill. Проверяем, что DEPLOY.md всё
+# это фиксирует — не имитацию контракта, а именно те три условия.
+pattern = '(?s)10 обязательных артефактов.{0,6000}status.{0,80}complete.{0,4000}restore-drill'
 
 [[rules]]
 id = "BCP-002"

@@ -150,7 +150,7 @@ REQUIRED_MARKERS = [
         "не показан gateway contract/runtime drift",
     ),
     (README, "README.md", "9 профилей", "канонический profile count — 9"),
-    (DEPLOY, "DEPLOY.md", "8 обязательных", "нет backup completeness contract"),
+    (DEPLOY, "DEPLOY.md", "10 обязательных", "нет backup completeness contract"),
     (
         DEPLOY,
         "DEPLOY.md",
