@@ -290,3 +290,26 @@ metrics-units-verify:
         exit 1
       fi
       echo "юниты разбираются без замечаний"
+
+# ── Сканирование зависимостей: npm + pip ──────────────────────────────────
+# Центализованный скрипт с единой логикой для обоих пакетных менеджеров.
+# На дефолтной ветке и в MR проверяется при изменении requirements-dev.txt.
+dependency-scan:
+  stage: compliance
+  image: python:3.11-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - changes:
+        - requirements-dev.txt
+        - requirements.txt
+        - package.json
+        - ci/scan-deps.sh
+        - .gitlab-ci.yml
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends npm
+    - pip install --no-cache-dir pip-audit
+  script:
+    - bash ci/scan-deps.sh
+
