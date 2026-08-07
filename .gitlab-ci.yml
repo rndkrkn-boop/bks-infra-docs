@@ -13,6 +13,9 @@ stages:
 # прогона тестов. Эта джоба намеренно без rules:changes: гоняет tests/
 # целиком на каждом MR и на дефолтной ветке, независимо от того, что именно
 # изменилось.
+#
+# AUDIT-204 (PHASE 1): добавлен coverage-гейт через pytest-cov
+# Гейт: unit-tests-coverage >= 75% (см. docs/roadmap-gates.yaml)
 daily-cycle-tests:
   stage: tests
   image: python:3.11-slim
@@ -22,7 +25,15 @@ daily-cycle-tests:
   before_script:
     - pip install --no-cache-dir -r requirements-dev.txt
   script:
-    - python -m pytest tests/ -q
+    - python -m pytest tests/ -q --cov=. --cov-fail-under=75 --cov-report=xml --cov-report=term-missing
+    - echo "✓ GATE PASS: unit-tests-coverage >= 75%"
+  artifacts:
+    paths:
+      - coverage.xml
+      - .coverage
+      - htmlcov/
+    expire_in: 30 days
+    when: always
 
 # ── Рендер-валидация mermaid-диаграмм ─────────────────────────────────────
 # Каждый блок из ARCHITECTURE_MERMAID.md реально рендерится mermaid-cli:
