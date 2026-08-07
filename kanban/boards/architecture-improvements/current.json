@@ -1,0 +1,65 @@
+{
+  "generated_at": "2026-08-04T15:30:00+08:00",
+  "summary": {
+    "total_items": 13,
+    "progress_percent": 15,
+    "breakdown": {
+      "Critical": {
+        "todo": 1,
+        "ready": 0,
+        "in_progress": 0,
+        "done": 1,
+        "blocked": 1
+      },
+      "High": {
+        "todo": 0,
+        "ready": 0,
+        "in_progress": 0,
+        "done": 1,
+        "blocked": 3
+      },
+      "Medium": {
+        "todo": 0,
+        "ready": 0,
+        "in_progress": 0,
+        "done": 0,
+        "blocked": 3
+      },
+      "Low": {
+        "todo": 0,
+        "ready": 0,
+        "in_progress": 0,
+        "done": 0,
+        "blocked": 3
+      }
+    },
+    "done_items": [
+      {
+        "id": 1,
+        "title": "Matrix Synapse вне git/CI",
+        "priority": "Critical",
+        "completed_at": "2026-08-04T21:00:00+08:00"
+      },
+      {
+        "id": 7,
+        "title": "Compliance audit automation",
+        "priority": "High",
+        "completed_at": "2026-08-04T15:26:00+08:00",
+        "branch": "improvement/task-6",
+        "commit": "e174381"
+      }
+    ],
+    "in_progress_items": [],
+    "blocked_items": [
+      {
+        "id": 2,
+        "title": "Supply chain без подписи (cosign) — гейт готов в nemohermes_bks, подключать нужно в router/ и MemGraphRAG/",
+        "priority": "Critical",
+        "started_at": "2026-08-04T21:07:00+08:00",
+        "corrected_at": "2026-08-06T00:00:00+08:00",
+        "blocked_reason": "ci/verify-image-sig.sh и ci/cosign-lib.sh реализованы, закоммичены и покрыты позитивным/негативным selftest'ом (scripts/cosign-selftest.sh) — эта часть в nemohermes_bks завершена. Но у nemohermes_bks нет build/deploy-стадии в .gitlab-ci.yml (только tests/docs/compliance/backup/metrics), поэтому гейт физически некуда подключить в этом репозитории. Реальная сборка+push образов идёт в отдельных git-репозиториях router/ и MemGraphRAG/ (заигнорены родителем, свои .gitlab-ci.yml с kaniko build), которые вне периметра этого аудита. Риск (неподписанный образ доходит до деплоя) остаётся открытым до тех пор, пока bash ci/verify-image-sig.sh не будет вызван перед deploy-стадией в router/.gitlab-ci.yml и MemGraphRAG/.gitlab-ci.yml — это отдельные задачи в тех репозиториях, не в этом.",
+        "see_also": "ARCHITECTURE-RUNTIME.md#supply-chain-image-build-push-and-signing-cosign"
+      }
+    ]
+  }
+}
