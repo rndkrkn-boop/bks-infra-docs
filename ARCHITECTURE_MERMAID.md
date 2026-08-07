@@ -226,6 +226,14 @@ compose -p monitoring up -d
 + проверка loki-стрима"]:::ok
             MO1 --> MO2
         end
+        subgraph PMX["bks/matrix
+CI: lint stage"]
+            MX1["shellcheck + compose-lint
+без deploy-стадии (сознательно —
+platforms.matrix ещё не в profile
+config.yaml, docker compose
+up -d вручную)"]:::ci
+        end
     end
 
     R5 -.->|"curl POST /trigger/pipeline\nSYNC_ONLY=true (best-effort)"| BK2
@@ -252,6 +260,7 @@ compose -p monitoring up -d
     style PS   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PH   fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style PMON fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
+    style PMX  fill:none,stroke:#f97316,stroke-width:1px,stroke-dasharray:4
     style RUN  fill:none,stroke:#374151,stroke-width:2px
 ```
 

@@ -14,9 +14,8 @@
 Документационный meta-repo и workspace enterprise-развёртывания Hermes-агентов
 на базе NVIDIA NemoClaw / OpenShell для клиента «БайкалКварцСамоцветы».
 Компоненты `NemoClaw`, `router`, `MemGraphRAG`, `bksamotsvety`,
-`sandbox-templates`, `host-infra` и `monitoring` — отдельные git-репозитории.
-`matrix/` — тоже отдельный git-репозиторий, но пока только локальный
-(см. таблицу ниже).
+`sandbox-templates`, `host-infra`, `monitoring` и `matrix` — отдельные
+git-репозитории.
 
 Полная схема взаимодействия всех частей: [`ARCHITECTURE.md`](./ARCHITECTURE.md)
 (ASCII) / [`ARCHITECTURE_MERMAID.md`](./ARCHITECTURE_MERMAID.md) (блок-диаграммы).
@@ -32,7 +31,7 @@
 | [`NemoClaw/`](./NemoClaw/) | Апстрим NVIDIA: CLI + blueprint для запуска агентов в изолированных OpenShell-песочницах | [README](./NemoClaw/README.md) |
 | [`host-infra/`](./host-infra/) | Хостовый supervision-слой: watchdog (5 мин, Telegram-алерты), версионированные бэкапы с GFS-ретеншеном, compose для CI-раннера `gitlab-runner-shell` | [README](./host-infra/README.md) |
 | [`monitoring/`](./monitoring/) | Observability: Grafana + Prometheus + Loki + Alloy отдельным compose-проектом | [README](./monitoring/README.md) |
-| [`matrix/`](./matrix/) | Self-hosted Matrix Synapse + PostgreSQL — задел под внутренний чат/алерты без зависимости от Telegram. **Не интегрирован в контракт**: нет проекта в GitLab-группе `bks` (репозиторий там ещё не создан), не в daily-backup, платформа `matrix` не подключена ни в один профильный `config.yaml`. См. R13 в [аудите 2026-07-25](./docs/audit/full-project-audit-2026-07-25.md) | [README](./matrix/README.md) |
+| [`matrix/`](./matrix/) | Self-hosted Matrix Synapse + PostgreSQL — задел под внутренний чат/алерты без зависимости от Telegram. С 2026-08-07: свой проект в GitLab-группе `bks`, минимальный CI (lint), в daily-backup контракте host-infra (10/10 артефактов). Платформа `matrix` пока не подключена ни в один профильный `config.yaml` — единственный оставшийся пункт R13 в [аудите 2026-07-25](./docs/audit/full-project-audit-2026-07-25.md) | [README](./matrix/README.md) |
 
 ## С чего начать
 
