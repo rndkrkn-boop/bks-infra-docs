@@ -36,3 +36,10 @@ audits/*.log
 # stderr Claude-аудита и невалидный (не-JSON) сырой вывод — тот же принцип.
 audits/*.stderr
 audits/*-audit-report.raw.txt
+# JSON-отчёт аудита и одобрение — тот же одноразовый артефакт прогона.
+audits/*-audit-report.json
+audits/*-approval.json
+# Ежедневный kanban-снимок (scripts/daily-implement-now.sh собирает его из
+# audits/*-approval.json через jq) — производный артефакт, не история.
+# Персистентное состояние досок живёт в kanban/boards/ и коммитится отдельно.
+kanban/*-kanban.json
