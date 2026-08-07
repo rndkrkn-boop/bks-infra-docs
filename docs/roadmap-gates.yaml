@@ -5,12 +5,19 @@
 # Этот файл определяет желаемые критерии качества для развёртывания в production.
 # На 2026-08-07 проект находится на переходной фазе:
 #   • Текущая реальность в .gitlab-ci.yml: pytest (но БЕЗ coverage_percent)
-#   • Отсутствуют: docker-build, trivy security scan, helm-lint
+#   • Отсутствуют ЗДЕСЬ: trivy security scan, helm-lint (helm — намеренно, см.
+#     gates.high.helm-lint)
+#   • docker-build — НЕ отсутствует, а вне периметра этого репо: nemohermes_bks
+#     (мета-репо оркестрации/docs/CI/compliance) не собирает docker-образов;
+#     свои build-стадии на kaniko уже ACTIVE в router/.gitlab-ci.yml и
+#     MemGraphRAG/.gitlab-ci.yml (см. gates.critical.docker-build-success —
+#     границу гейта уточнили 2026-08-07, архитектурный аудит F6)
 #   • Плана замещения K3s на docker-compose (завершено в бкс/bksamotsvety, 2026-07-25)
 #
 # СТРАТЕГИЯ ВНЕДРЕНИЯ (ВАРИАНТ 1):
 #   Phase 1 (текущий спринт): добавить хотя бы coverage-гейт (pytest-cov в CI)
-#   Phase 2: добавить docker-build успешное в CI/CD
+#   Phase 2: n/a для nemohermes_bks — docker-build уже ACTIVE в router/ и
+#     MemGraphRAG/, отслеживать в их собственных roadmap, не здесь
 #   Phase 3: интегрировать security scan (trivy/pip-audit)
 #   Phase 4: helm-lint (если K3s вернётся к использованию)
 #   Phase 5: performance-regression мониторинг (интеграция с Prometheus)
@@ -26,8 +33,16 @@ gates:
       message: "Docker image must build without errors"
       environments: ["dev", "test", "canary", "prod"]
       required: true
-      status: PENDING  # router/memgraphrag имеют docker-build в CI, но не nemohermes_bks
-      phase: 2  # планируется в Phase 2
+      status: NOT_APPLICABLE_HERE  # nemohermes_bks не собирает docker-образов вообще
+      phase: null  # вне roadmap этого репозитория — см. note
+      note: >-
+        Собирают router/ и MemGraphRAG/, каждый в своём .gitlab-ci.yml
+        (стадия build: kaniko → GitLab Registry) — там гейт уже ACTIVE, не
+        PENDING. nemohermes_bks — оркестрирующий мета-репо (docs/CI/compliance),
+        своих docker-образов не строит и не может гейтить чужую сборку;
+        прежняя формулировка ("PENDING, phase 2") ошибочно подразумевала, что
+        гейт предстоит добавить именно здесь. Полноту сборки отслеживать в
+        roadmap/CI router/ и MemGraphRAG/, не в этом файле.
 
     - name: "security-scan-pass"
       condition: "trivy_severity_critical == 0"
