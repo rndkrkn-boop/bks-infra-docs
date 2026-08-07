@@ -31,7 +31,8 @@ send_telegram() {
     # Используем Telegram Bot API для отправки сообщения
     # API endpoint: https://api.telegram.org/bot<TOKEN>/sendMessage
     local API_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
-    local PAYLOAD=$(cat <<EOF
+    local PAYLOAD
+    PAYLOAD=$(cat <<EOF
 {
     "chat_id": ${TELEGRAM_CHAT_ID},
     "text": "${MSG}",
@@ -116,9 +117,7 @@ implement_phase() {
 verify_phase() {
     log "🧪 PHASE 4: VERIFICATION & COMMIT STARTED"
     
-    bash "$SCRIPTS_DIR/daily-verify.sh"
-    
-    if [ $? -eq 0 ]; then
+    if bash "$SCRIPTS_DIR/daily-verify.sh"; then
         log "✅ VERIFY PHASE COMPLETE"
         # Конкретный счётчик тестов и хеш прогона — в git commit message и
         # $CYCLE_LOG (daily-verify.sh пишет их туда же); здесь только факт

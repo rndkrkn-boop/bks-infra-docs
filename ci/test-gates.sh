@@ -114,7 +114,6 @@ echo "FAIL-OPEN DETECTION:"
 echo
 
 # Check if services are running but marked healthy incorrectly
-HEALTHY_GATES=0
 RUNNING_SERVICES=$(docker compose ps --services --filter "status=running" | wc -l)
 
 if [ "$RUNNING_SERVICES" -gt 0 ]; then

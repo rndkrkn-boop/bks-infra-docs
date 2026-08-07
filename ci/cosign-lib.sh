@@ -32,7 +32,9 @@ set -euo pipefail
 # прод-образов, «latest» тем более неприемлем.
 # Суммы — из официального cosign_checksums.txt релиза, сверены 2026-08-04.
 COSIGN_VERSION="${COSIGN_VERSION:-v2.4.3}"
+# shellcheck disable=SC2034 # читаются динамически: eval "want=\${COSIGN_SHA256_${arch}}" ниже (cosign_install)
 COSIGN_SHA256_amd64="caaad125acef1cb81d58dcdc454a1e429d09a750d1e9e2b3ed1aed8964454708"
+# shellcheck disable=SC2034
 COSIGN_SHA256_arm64="bd0f9763bca54de88699c3656ade2f39c9a1c7a2916ff35601caf23a79be0629"
 
 # Куда ставить бинарник. В CI — внутрь чекаута (нет root), локально можно
@@ -232,6 +234,7 @@ cosign_registry_login() {
 cosign_resolve_digest() {
   local ref="$1"
   # triangulate печатает <repo>:sha256-<digest>.sig — вырезаем digest.
+  # shellcheck disable=SC2086  # флаги должны разбиться на слова
   "$COSIGN" triangulate $COSIGN_REGISTRY_FLAGS "$ref" 2>/dev/null \
     | sed -n 's/.*:sha256-\([0-9a-f]\{64\}\)\.sig$/sha256:\1/p'
 }
