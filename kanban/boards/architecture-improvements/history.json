@@ -1,48 +1,27 @@
-{
-  "generated_at": "2026-08-04T15:30:00+08:00",
-  "runs": [
-    {
-      "date": "2026-08-04",
-      "items_completed": 1,
-      "items_in_progress": 0,
-      "items_blocked": 10,
-      "items_todo": 2,
-      "progress_percent": 8,
-      "completed": [
-        {
-          "id": 1,
-          "title": "Matrix Synapse вне git/CI",
-          "priority": "Critical",
-          "session_id": "28c832cc-ad72-41c2-9de1-0e3a0337a1e2",
-          "cost_usd": 1.04,
-          "turns": 25,
-          "branch": "improvement/task-1",
-          "commit": "a405bde"
-        }
-      ]
+[
+  {
+    "date": "2026-08-04",
+    "stats": {
+      "total": 13,
+      "by_status": {
+        "TODO": 2,
+        "READY": 1,
+        "IN_PROGRESS": 0,
+        "BLOCKED": 10,
+        "DONE": 0
+      },
+      "by_priority": {
+        "Critical": 3,
+        "High": 4,
+        "Medium": 3,
+        "Low": 3
+      },
+      "completion_rate": 0.0
     },
-    {
-      "date": "2026-08-04",
-      "items_completed": 1,
-      "items_in_progress": 1,
-      "items_blocked": 9,
-      "items_todo": 2,
-      "progress_percent": 15,
-      "completed": [
-        {
-          "id": 7,
-          "title": "Compliance audit automation",
-          "priority": "High",
-          "branch": "improvement/task-6",
-          "commit": "e174381",
-          "checkpoints": [
-            "Define compliance rules - compliance/rules.toml v1.0.0, 14 правил",
-            "Implement audit tooling - scripts/compliance-audit.py + 17 тестов",
-            "Setup automated reporting - ci/compliance-report.sh, CI stage compliance, Prometheus textfile",
-            "Create compliance dashboard - self-contained HTML + compliance/grafana-dashboard.json"
-          ]
-        }
-      ]
-    }
-  ]
-}
+    "ready_count": 1,
+    "blocked_count": 10,
+    "done_count": 0,
+    "completion_rate": 0.0,
+    "note": "Corrected 2026-08-04T19:00:00+08:00 — earlier entry recorded a fabricated DONE for Task #1 with no corresponding real execution (see current.json note)."
+  }
+]
