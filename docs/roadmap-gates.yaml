@@ -1,0 +1,145 @@
+# ROADMAP: Quality Gates для nemohermes_bks
+# ═══════════════════════════════════════════════════════════════════════════════
+# Статус: ЦЕЛЕВАЯ ПОЛИТИКА (не текущая реальность)
+# 
+# Этот файл определяет желаемые критерии качества для развёртывания в production.
+# На 2026-08-07 проект находится на переходной фазе:
+#   • Текущая реальность в .gitlab-ci.yml: pytest (но БЕЗ coverage_percent)
+#   • Отсутствуют: docker-build, trivy security scan, helm-lint
+#   • Плана замещения K3s на docker-compose (завершено в бкс/bksamotsvety, 2026-07-25)
+#
+# СТРАТЕГИЯ ВНЕДРЕНИЯ (ВАРИАНТ 1):
+#   Phase 1 (текущий спринт): добавить хотя бы coverage-гейт (pytest-cov в CI)
+#   Phase 2: добавить docker-build успешное в CI/CD
+#   Phase 3: интегрировать security scan (trivy/pip-audit)
+#   Phase 4: helm-lint (если K3s вернётся к использованию)
+#   Phase 5: performance-regression мониторинг (интеграция с Prometheus)
+#
+# ССЫЛКА: см. AUDIT-204 в канбане, ARCHITECTURE.md §0
+# ════════════════════════════════════════════════════════════════════════════════
+
+gates:
+  # Critical: Must pass in ALL environments
+  critical:
+    - name: "docker-build-success"
+      condition: "build_exit_code == 0"
+      message: "Docker image must build without errors"
+      environments: ["dev", "test", "canary", "prod"]
+      required: true
+      status: PENDING  # router/memgraphrag имеют docker-build в CI, но не nemohermes_bks
+      phase: 2  # планируется в Phase 2
+
+    - name: "security-scan-pass"
+      condition: "trivy_severity_critical == 0"
+      message: "No critical vulnerabilities allowed"
+      environments: ["dev", "test", "canary", "prod"]
+      required: true
+      status: PENDING  # pip-audit интегрирован (ci/scan-deps.sh), trivy нет
+      phase: 3  # планируется в Phase 3
+
+    - name: "unit-tests-coverage"
+      condition: "coverage_percent >= 75"
+      message: "Minimum 75% code coverage required"
+      environments: ["dev", "test", "canary"]
+      required: true
+      status: PHASE_1  # добавляется в текущем спринте (AUDIT-204)
+      phase: 1
+      gitlab_ci_job: "daily-cycle-tests"
+      note: "pytest-cov добавлен в requirements-dev.txt, гейт активирован с --cov --cov-fail-under=75"
+
+  # High: Must pass in test+canary+prod
+  high:
+    - name: "integration-tests-pass"
+      condition: "integration_tests_passed > 0"
+      message: "Integration tests must pass"
+      environments: ["test", "canary", "prod"]
+      required: true
+      status: BLOCKED  # integration-тесты не определены в tests/
+      phase: 2
+
+    - name: "helm-lint"
+      condition: "helm_lint_errors == 0"
+      message: "Helm chart must be valid"
+      environments: ["test", "canary", "prod"]
+      required: true
+      status: NOT_APPLICABLE  # K3s декомиссирован, используется docker-compose
+      phase: 5
+      note: "Возобновить при возврате к Helm/K3s"
+
+    - name: "performance-regression"
+      condition: "latency_p95_ms <= baseline * 1.1"
+      message: "Latency must not degrade >10% from baseline"
+      environments: ["canary", "prod"]
+      required: false  # Warning only
+      status: PENDING  # требует интеграции с Prometheus/Grafana (есть monitoring/)
+      phase: 5
+
+  # Medium: DEV environment only
+  dev:
+    - name: "code-style"
+      condition: "lint_warnings < 50"
+      message: "Code style violations < 50"
+      environments: ["dev"]
+      required: false
+      status: ACTIVE  # ruff встроен в CI via requirements-dev.txt
+      note: "Рекомендация: добавить ruff check в daily-cycle-tests для наглядности"
+
+# Fail-open detection rules
+# Monitors for gates that silently pass when they should fail
+fail_open_detection:
+  enabled: true
+  check_interval_seconds: 60
+  
+  rules:
+    - name: "build-gate-bypass"
+      monitor: "docker-build-success"
+      condition: "gate_marked_pass_but_build_log_contains_error"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+    - name: "test-gate-bypass"
+      monitor: "integration-tests-pass"
+      condition: "gate_marked_pass_but_test_count == 0"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+    - name: "security-scan-bypass"
+      monitor: "security-scan-pass"
+      condition: "gate_marked_pass_but_scan_not_executed"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+
+    - name: "coverage-gate-bypass"
+      monitor: "unit-tests-coverage"
+      condition: "gate_marked_pass_but_coverage_report_missing"
+      severity: "CRITICAL"
+      action: "BLOCK_DEPLOYMENT"
+      note: "PHASE_1: добавлено в Phase 1"
+
+# Rollback conditions
+# Automatically revert if gates fail in production
+rollback:
+  enabled: false  # Пока отключено (К3s нет, docker-compose без автоматизма)
+  condition: "failed_critical_gates >= 2"
+  grace_period_seconds: 300
+  max_rollbacks_per_hour: 2
+
+# ФАЗА РЕАЛИЗАЦИИ: PHASE 1
+# ════════════════════════════════════════════════════════════════════════════════
+# AUDIT-204 (MEDIUM): Привести gates.yaml в рабочее состояние
+# 
+# Первый шаг (PHASE 1):
+#   ✓ pytest-cov добавлен в requirements-dev.txt
+#   ✓ daily-cycle-tests дополнен флагами --cov --cov-fail-under=75
+#   ✓ ci/gates.yaml перемещён в docs/roadmap-gates.yaml (этот файл)
+#   ✓ комментарии в ARCHITECTURE.md обновлены на ссылку на roadmap
+#
+# Критерий завершения Phase 1:
+#   • CI на каждом MR и главной ветке гоняет pytest с coverage-отчётом
+#   • Гейт вычисляется как часть daily-cycle-tests
+#   • Порог 75% нельзя снизить без явного решения в коммит-сообщении
+#
+# След PHASE 1 в реальности:
+#   • .coverage-percent файл создаётся в CI артефактах
+#   • GitLab CI логирует "GATE PASS: unit-tests-coverage >= 75"
+#   • Первый коммит, не прошедший гейт, получит в CI статус FAILED

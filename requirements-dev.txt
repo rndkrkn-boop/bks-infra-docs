@@ -6,7 +6,9 @@
 # запрещает это на уровне комплаенса.
 # 9.0.2 → 9.0.3: PYSEC-2026-1845, найдено ci/scan-deps.sh 2026-08-06 (тем же
 # прогоном, что впервые заставил scan-deps.sh реально сканировать — AUDIT-009).
+# 2026-08-07: добавлен pytest-cov для AUDIT-204 (coverage-гейт в daily-cycle-tests)
 pytest==9.0.3
+pytest-cov==5.0.0
 ruff==0.15.20
 pip-audit==2.10.1
 jsonschema==4.10.3
