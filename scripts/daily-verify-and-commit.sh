@@ -232,7 +232,8 @@ Format: {\"status\": \"healthy|at_risk\", \"issues\": [], \"ready_to_commit\": t
     # ci, k8s и .gitlab-ci.yml сознательно убраны из белого списка (AUDIT-005):
     # если задаче нужно поправить сами гейты цикла, это коммитится вручную
     # человеком, как сегодняшние AUDIT-005/007/008/009/010a — не автономно.
-    git add -- scripts compliance metrics tests docs *.md
+    # kanban/boards и memory-bank добавлены для отслеживания состояния доски и памяти (AUDIT-201).
+    git add -- scripts compliance metrics tests docs kanban memory-bank *.md
 
     # Гейт стоит ДО git commit и завершает скрипт, а не уводит в else-ветку: так
     # между проверкой индекса и коммитом физически нечему вклиниться.
