@@ -1,5 +1,16 @@
 # Deployment Least-Privilege Principles
 
+> [!CAUTION]
+> **Устарело.** Документ целиком описывает Kubernetes RBAC-контур
+> (`kubectl`, `k8s/rbac-roles.yaml`, namespaces `nemohermes-prod/staging/dev`).
+> K3s декомиссирован 2026-07-06 (см. [`ARCHITECTURE.md` §2.5](../ARCHITECTURE.md)) —
+> производство сейчас Docker Compose + OpenShell, без Kubernetes и без RBAC
+> в этом виде. Принцип наименьших привилегий по-прежнему актуален, но его
+> текущее воплощение — раздельные GitLab CI/CD Variables per-project и
+> `gb10-shell` как единственный раннер с правом деплоя (см. `ARCHITECTURE.md`
+> §0), не манифесты ниже. Оставлено как историческая справка, не как
+> инструкция к действию.
+
 ## Problem (Bug gb10-shell)
 Historically, deployment automation ran with excessive privileges:
 - Shell access to production hosts
